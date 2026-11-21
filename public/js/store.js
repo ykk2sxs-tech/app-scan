@@ -49,6 +49,8 @@ export const DEFAULT_SETTINGS = {
   fixNumbers: true,
   thaiDigits: false,
   removeBlankLines: false,
+  bookMode: false,
+  splitSpreads: true,
   resolution: 'fhd',
   highResPhoto: true,
   videoInterval: 2,

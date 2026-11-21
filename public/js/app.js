@@ -3,9 +3,22 @@
 import { Camera } from './camera.js';
 import { VideoRecorder, extractFramesFromFile } from './video-scan.js';
 import { recognize, getWorker } from './ocr.js';
-import { recognizeOpenThai, getOpenThai } from './openthai.js';
+import { recognizeOpenThai, getOpenThai, rowsFromLines, rowsToText } from './openthai.js';
 import { cleanOcrText, textSimilarity, ocrQuality } from './thai-text.js';
-import { normalizeImageBlob, rotateBlob, cropBlob, prepareForOcr, loadBitmap, toCanvas, canvasToBlob } from './image-tools.js';
+import {
+  normalizeImageBlob,
+  rotateBlob,
+  cropBlob,
+  prepareForOcr,
+  loadBitmap,
+  toCanvas,
+  canvasToBlob,
+  imageSize,
+  findGutter,
+  splitSpread,
+} from './image-tools.js';
+import { reflowRows, blocksToText, edgeKeys } from './book.js';
+import { buildSearchablePdf } from './pdf-export.js';
 import { pageStore, loadSettings, saveSettings, DEFAULT_SETTINGS } from './store.js';
 import { buildWordDocument, buildPlainText, loadDocx, SOURCE_LABEL } from './word-export.js';
 import {
@@ -20,8 +33,12 @@ import {
 } from './util.js';
 import { VENDOR } from '../vendor/paths.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PDF_MIME = 'application/pdf';
+const SPREAD_ASPECT = 1.2; // ภาพกว้าง/สูง ตั้งแต่นี้ขึ้นไปถือว่าเป็นหนังสือกาง 2 หน้า
+// ตั้งค่าที่มีผลกับข้อความ — เปลี่ยนแล้วจัดข้อความของหน้าที่ยังไม่ได้แก้ไขใหม่ทันที (ไม่ต้อง OCR ใหม่)
+const TEXT_SETTINGS = ['fixThai', 'fixNumbers', 'thaiDigits', 'removeThaiSpaces', 'removeBlankLines', 'bookMode'];
 const MIN_VIDEO_TEXT = 3; // เฟรมวิดีโอที่มีตัวอักษรน้อยกว่านี้ถือว่าไม่มีข้อความ
 const MIN_RETRY_TEXT = 10; // อ่านได้น้อยกว่านี้ จะลองปรับภาพอีกแบบแล้วอ่านใหม่
 const countChars = (text) => String(text || '').replace(/\s+/g, '').length;
@@ -333,6 +350,22 @@ async function importVideo(file) {
 
 async function addImagePage(blob, source, extra = {}) {
   const image = await normalizeImageBlob(blob, 2800, 0.9);
+  const s = state.settings;
+  if (s.bookMode && s.splitSpreads) {
+    const { width, height } = await imageSize(image);
+    if (width / height >= SPREAD_ASPECT) {
+      // หนังสือกาง 2 หน้า → แยกเป็นหน้าซ้ายและขวา
+      const [left, right] = await splitSpread(image);
+      const detail = extra.detail ? `${extra.detail} ` : '';
+      const first = await addSinglePage(left, source, { ...extra, side: 'L', detail: `${detail}(ซ้าย)` });
+      await addSinglePage(right, source, { ...extra, side: 'R', detail: `${detail}(ขวา)` });
+      return first;
+    }
+  }
+  return addSinglePage(image, source, extra);
+}
+
+async function addSinglePage(image, source, extra = {}) {
   const thumb = await makeThumb(image);
   // คำนวณลำดับหลัง await ทั้งหมด เพื่อไม่ให้หน้าที่เพิ่มพร้อมกันได้ลำดับซ้ำ
   const page = {
@@ -342,8 +375,10 @@ async function addImagePage(blob, source, extra = {}) {
     source,
     sourceDetail: extra.detail || '',
     groupId: extra.groupId || null,
+    side: extra.side || null,
     image,
     original: null,
+    layout: null,
     thumb,
     text: '',
     rawText: '',
@@ -405,7 +440,7 @@ async function ocrPage(page) {
       return;
     }
     page.rawText = result.text;
-    page.text = cleanOcrText(result.text, s);
+    page.layout = result.layout || null;
     page.confidence = result.confidence;
     page.engine = result.engine;
     page.status = 'done';
@@ -417,7 +452,13 @@ async function ocrPage(page) {
       page.image = await rotateBlob(image, result.rotation);
       page.thumb = await makeThumb(page.image);
     }
+    if (result.engine === 'openthai' && result.layout?.dropped?.length) {
+      await rescueDroppedLines(page, result.layout);
+    }
+    page.text = composeText(page);
     await savePage(page);
+    // โหมดหนังสือ: หัวกระดาษที่ซ้ำกันจะรู้ได้เมื่อมีหลายหน้า → จัดข้อความหน้าอื่นใหม่ด้วย
+    if (s.bookMode) await recomposeAll(page);
     if (page.groupId && s.dedupe) await dedupeVideoFrame(page);
   } catch (err) {
     console.error(err);
@@ -429,6 +470,86 @@ async function ocrPage(page) {
   } finally {
     if (state.pages.includes(page)) refreshPage(page);
   }
+}
+
+/**
+ * บรรทัดที่ OpenThai อ่านแล้วไม่มั่นใจจนตัดทิ้ง (มักเป็นหัวข้อตัวหนาขนาดใหญ่) → ให้ Tesseract อ่านซ้ำเฉพาะบรรทัดนั้น
+ * ใช้เฉพาะกรอบที่ขนาดเท่าบรรทัดข้อความจริง (ไม่ใช่เศษเล็ก ๆ เช่นเลขหน้า/รอยเปื้อน)
+ */
+async function rescueDroppedLines(page, layout) {
+  const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1] || 0;
+  const H = median(layout.lines.map((l) => l.y1 - l.y0)) || 0.02;
+  const candidates = layout.dropped
+    .filter((d) => d.y1 - d.y0 >= 0.7 * H && (d.x1 - d.x0) * layout.aspect >= 1.5 * (d.y1 - d.y0))
+    .slice(0, 8);
+  if (!candidates.length) return;
+  const bmp = await loadBitmap(page.image);
+  const W = bmp.width;
+  const Hh = bmp.height;
+  let added = 0;
+  try {
+    for (const d of candidates) {
+      const pad = (d.y1 - d.y0) * 0.2;
+      const sx = Math.max(0, (d.x0 - pad / layout.aspect) * W);
+      const sy = Math.max(0, (d.y0 - pad) * Hh);
+      const sw = Math.min(W - sx, (d.x1 - d.x0 + (2 * pad) / layout.aspect) * W);
+      const sh = Math.min(Hh - sy, (d.y1 - d.y0 + 2 * pad) * Hh);
+      if (sw < 4 || sh < 4) continue;
+      const k = Math.max(1, 48 / sh); // ตัวอักษรเล็กเกินไป Tesseract อ่านไม่ออก → ขยาย
+      const c = document.createElement('canvas');
+      c.width = Math.round(sw * k);
+      c.height = Math.round(sh * k);
+      c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      const r = await recognize(c, { langs: state.settings.ocrLang, psm: '7' });
+      const text = r.text.replace(/\s+/g, ' ').trim();
+      if (r.confidence < 70 || countChars(text) < 2) continue;
+      layout.lines.push({ text, ri: d.ri, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, quad: d.quad });
+      added++;
+    }
+  } catch (err) {
+    console.warn('rescue:', err);
+  } finally {
+    bmp.close?.();
+  }
+  if (!added) return;
+  layout.lines.sort((a, b) => a.ri - b.ri || a.x0 - b.x0);
+  layout.rows = rowsFromLines(layout.lines);
+  page.rawText = rowsToText(layout.rows);
+}
+
+/** ข้อความของหน้าจากผล OCR ตามการตั้งค่าปัจจุบัน (โหมดหนังสือ = รวมบรรทัดเป็นย่อหน้า แยกหัวข้อ) */
+function composeText(page) {
+  const s = state.settings;
+  const rows = page.layout?.rows;
+  if (s.bookMode && rows?.length) {
+    const clean = (t) => cleanOcrText(t, { ...s, removeBlankLines: true }).replace(/\s*\n\s*/g, ' ');
+    const others = state.pages.filter((p) => p !== page && p.layout?.rows?.length).flatMap((p) => edgeKeys(p.layout.rows));
+    const res = reflowRows(
+      rows.map((r) => ({ ...r, text: clean(r.text) })),
+      { aspect: page.layout.aspect, otherEdges: others },
+    );
+    page.flow = { startsNew: res.startsNew, endsOpen: res.endsOpen };
+    return blocksToText(res.blocks);
+  }
+  page.flow = null;
+  return cleanOcrText(page.rawText, s);
+}
+
+/** จัดข้อความใหม่ทุกหน้าที่อ่านแล้วและผู้ใช้ยังไม่ได้แก้ไข */
+async function recomposeAll(except) {
+  const changed = [];
+  for (const p of state.pages) {
+    if (p === except || p.status !== 'done' || p.edited) continue;
+    const text = composeText(p);
+    if (text !== p.text) {
+      p.text = text;
+      changed.push(p);
+    }
+  }
+  await Promise.all(changed.map(savePage));
+  if (state.tab === 'pages') renderPages();
+  if (state.editingId && changed.some((p) => p.id === state.editingId)) fillEditor();
+  return changed.length;
 }
 
 /**
@@ -486,7 +607,9 @@ async function dedupeVideoFrame(page) {
     return;
   }
   const prev = state.pages
-    .filter((p) => p.groupId === page.groupId && p !== page && p.status === 'done' && p.order < page.order)
+    .filter(
+      (p) => p.groupId === page.groupId && p.side === page.side && p !== page && p.status === 'done' && p.order < page.order,
+    )
     .at(-1);
   if (!prev) return;
   const similarity = textSimilarity(prev.text, page.text) * 100;
@@ -548,6 +671,7 @@ function renderPages() {
     ? `${pages.length} หน้า • อ่านแล้ว ${done}${waiting ? ` • รอ ${waiting}` : ''}`
     : '';
   $('#btn-export-word').disabled = pages.length === 0;
+  $('#btn-export-pdf').disabled = pages.length === 0;
   list.innerHTML = pages
     .map(
       (p, i) => `
@@ -706,7 +830,57 @@ async function editorAction(act) {
       await savePage(page);
       refreshPage(page);
       return processQueue();
+    case 'split':
+      return splitPage(page);
   }
+}
+
+/** แบ่งภาพหนังสือกาง 2 หน้า: หน้านี้เป็นหน้าซ้าย และเพิ่มหน้าขวาต่อท้าย */
+async function splitPage(page) {
+  if (!confirm('แบ่งภาพนี้เป็น 2 หน้า (ซ้าย/ขวา) ตามแนวสันหนังสือ?')) return;
+  try {
+    const [left, right] = await splitSpread(page.image, await findGutter(page.image));
+    const i = state.pages.indexOf(page);
+    const next = state.pages[i + 1];
+    const rightPage = {
+      ...page,
+      id: uid(),
+      order: next ? (page.order + next.order) / 2 : page.order + 1,
+      createdAt: Date.now(),
+      side: 'R',
+      sourceDetail: `${page.sourceDetail || ''} (ขวา)`.trim(),
+      image: right,
+      original: null,
+      thumb: await makeThumb(right),
+      layout: null,
+      text: '',
+      rawText: '',
+      status: 'pending',
+      edited: false,
+    };
+    Object.assign(page, {
+      side: 'L',
+      sourceDetail: `${page.sourceDetail || ''} (ซ้าย)`.trim(),
+      image: left,
+      original: null,
+      thumb: await makeThumb(left),
+      layout: null,
+      status: 'pending',
+      edited: false,
+    });
+    state.pages.splice(i + 1, 0, rightPage);
+    await Promise.all([savePage(page), savePage(rightPage)]);
+    refreshPage(page);
+    toast('แบ่งเป็น 2 หน้าแล้ว — กำลังอ่านข้อความใหม่', 'ok');
+    processQueue();
+  } catch (err) {
+    toast(`แบ่งหน้าไม่สำเร็จ: ${err.message}`, 'error');
+  }
+}
+
+function updateBookHints() {
+  const on = !!state.settings.bookMode;
+  $('#ed-book-hint').hidden = !on;
 }
 
 // ----- crop
@@ -804,6 +978,7 @@ function wordOptions() {
     includeImages: s.wordImages,
     pageBreak: s.wordPageBreak,
     headings: s.wordHeadings,
+    bookMode: s.bookMode,
   };
 }
 
@@ -824,6 +999,32 @@ async function exportWord({ share = false } = {}) {
   } catch (err) {
     console.error(err);
     toast(`สร้างไฟล์ Word ไม่สำเร็จ: ${err.message}`, 'error');
+  } finally {
+    btn.classList.remove('busy');
+  }
+}
+
+async function exportPdf({ share = false } = {}) {
+  flushTextSave();
+  const pages = state.pages;
+  if (!pages.length) return toast('ยังไม่มีหน้าที่สแกน');
+  const waiting = pages.filter((p) => p.status === 'pending' || p.status === 'processing').length;
+  if (waiting && !confirm(`ยังอ่านข้อความไม่เสร็จอีก ${waiting} หน้า ต้องการบันทึกเลยหรือไม่?`)) return;
+  const btn = share ? $('#btn-share-pdf') : $('#btn-export-pdf');
+  btn.classList.add('busy');
+  try {
+    const s = state.settings;
+    const blob = await buildSearchablePdf(pages, {
+      title: s.docTitle,
+      cleanLine: (t) => cleanOcrText(t, { ...s, removeBlankLines: true }).replace(/\s*\n\s*/g, ' '),
+    });
+    const name = `${safeFileName(s.docTitle)}_${fileStamp()}.pdf`;
+    if (share && (await shareFile(blob, name, s.docTitle))) return;
+    downloadBlob(blob, name);
+    toast(`บันทึก PDF แล้ว: ${name}`, 'ok');
+  } catch (err) {
+    console.error(err);
+    toast(`สร้าง PDF ไม่สำเร็จ: ${err.message}`, 'error');
   } finally {
     btn.classList.remove('busy');
   }
@@ -868,13 +1069,41 @@ function bindSettings() {
       if (typeof DEFAULT_SETTINGS[key] === 'number') v = Number(v);
       state.settings[key] = v;
       saveSettings(state.settings);
+      syncSettingInputs(key, el);
       onSettingChanged(key);
     });
   });
   $('#dedupe-value').textContent = String(state.settings.dedupeThreshold);
 }
 
-function onSettingChanged(key) {
+/** ตั้งค่าเดียวกันอาจมีช่องให้เลือกหลายที่ (เช่น โหมดหนังสือ) — ทำให้ตรงกันทุกช่อง */
+function syncSettingInputs(key, source) {
+  for (const el of $$(`[data-setting="${key}"]`)) {
+    if (el === source) continue;
+    if (el.type === 'checkbox') el.checked = !!state.settings[key];
+    else el.value = String(state.settings[key]);
+  }
+}
+
+function setSettings(values) {
+  Object.assign(state.settings, values);
+  saveSettings(state.settings);
+  for (const key of Object.keys(values)) syncSettingInputs(key);
+}
+
+async function onSettingChanged(key) {
+  if (key === 'bookMode') {
+    // ค่าที่เหมาะกับหนังสือ: ข้อความต่อเนื่อง ไม่แนบภาพ ไม่ขึ้นหน้าใหม่ทุกหน้า (เปลี่ยนเองได้ในตัวเลือก Word)
+    const on = state.settings.bookMode;
+    setSettings({ wordImages: !on, wordPageBreak: !on, wordHeadings: !on });
+    updateBookHints();
+  }
+  if (TEXT_SETTINGS.includes(key)) {
+    const n = await recomposeAll();
+    if (key === 'bookMode') {
+      toast(state.settings.bookMode ? `เปิดโหมดหนังสือแล้ว — จัดย่อหน้าใหม่ ${n} หน้า` : `ปิดโหมดหนังสือแล้ว (${n} หน้า)`, 'ok');
+    }
+  }
   if (key === 'dedupeThreshold') $('#dedupe-value').textContent = String(state.settings.dedupeThreshold);
   if (key === 'resolution' && camera.active) {
     camera.stop();
@@ -969,6 +1198,8 @@ function bindEvents() {
     if (btn.dataset.act === 'down') movePage(id, 1);
   });
   $('#btn-export-word').addEventListener('click', () => exportWord());
+  $('#btn-export-pdf').addEventListener('click', () => exportPdf());
+  $('#btn-share-pdf').addEventListener('click', () => exportPdf({ share: true }));
   $('#btn-share-word').addEventListener('click', () => exportWord({ share: true }));
   $('#btn-export-txt').addEventListener('click', () => {
     if (!state.pages.length) return toast('ยังไม่มีหน้าที่สแกน');
@@ -977,6 +1208,7 @@ function bindEvents() {
   $('#btn-copy-all').addEventListener('click', () => copyText(allText()));
   $('#btn-clear-all').addEventListener('click', clearAll);
   $('#btn-share-word').hidden = !canShareFiles(DOCX_MIME);
+  $('#btn-share-pdf').hidden = !canShareFiles(PDF_MIME);
 
   // editor
   $('#ed-close').addEventListener('click', closeEditor);
@@ -1031,6 +1263,7 @@ async function init() {
   bindSettings();
   bindEvents();
   setMode('photo');
+  updateBookHints();
   document.body.classList.add('scan-mode');
   $('#app-version').textContent =
     `เวอร์ชัน ${APP_VERSION} • OpenThai2.0-OCR-Text (iApp) • onnxruntime-web ${VENDOR.versions.ort} • ` +

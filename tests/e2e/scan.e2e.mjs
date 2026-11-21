@@ -1,5 +1,5 @@
 // ทดสอบทั้งระบบในเบราว์เซอร์จริง (Chromium + กล้องจำลอง)
-// ต้องมี: Playwright (npx playwright install chromium), ffmpeg และคำสั่ง unzip
+// ต้องมี: Playwright (npx playwright install chromium), ffmpeg, unzip และ pdftotext (poppler-utils)
 // รัน: npm run test:e2e   (ตั้ง SCREENSHOT_DIR=โฟลเดอร์ เพื่อเก็บภาพหน้าจอ)
 
 import { createRequire } from 'node:module';
@@ -19,6 +19,12 @@ const shots = process.env.SCREENSHOT_DIR;
 if (shots) mkdirSync(shots, { recursive: true });
 const PORT = 8099;
 const BASE = `http://localhost:${PORT}/`;
+
+const BOOK = {
+  p1: 'การบันทึกบัญชีเป็นขั้นตอนแรกของวงจรบัญชี กิจการต้องบันทึกรายการค้าทุกรายการลงในสมุดรายวันทั่วไปตามลำดับวันที่ที่เกิดรายการ โดยระบุชื่อบัญชีที่เดบิตและเครดิต พร้อมคำอธิบายรายการอย่างย่อ',
+  p2: 'หลักการบัญชีคู่กำหนดให้ทุกรายการค้าต้องบันทึกด้านเดบิตและด้านเครดิตด้วยจำนวนเงินที่เท่ากันเสมอ เช่น ซื้อวัสดุสำนักงานเป็นเงินสด 1,500 บาท บันทึกเดบิตวัสดุสำนักงานและเครดิตเงินสด',
+  p3: 'เมื่อสิ้นงวดบัญชี กิจการต้องผ่านรายการจากสมุดรายวันไปยังบัญชีแยกประเภท แล้วจัดทำงบทดลองเพื่อตรวจสอบความถูกต้องของยอดคงเหลือ',
+};
 
 const DOCS = {
   receipt: [
@@ -63,6 +69,22 @@ async function renderFixtures(browser) {
     execFileSync('ffmpeg', args);
     return out;
   };
+  // หน้าหนังสือ: หัวกระดาษซ้ำทุกหน้า หัวข้อตัวใหญ่ ย่อหน้าที่ตัดบรรทัด และเลขหน้า
+  const book = await browser.newPage({ viewport: { width: 900, height: 1270 } });
+  const bookPage = (num, title, paras) =>
+    `<html><body style="margin:0"><div style="width:900px;height:1270px;box-sizing:border-box;padding:50px 90px;position:relative;font:27px/1.65 Loma,'Noto Sans Thai',sans-serif;color:#111;text-align:justify;background:#fff">
+      <div style="font-size:21px;color:#444;text-align:center">บทที่ 1 การบัญชีเบื้องต้น</div>
+      <div style="font-size:46px;font-weight:bold;margin:70px 0 30px">${title}</div>
+      ${paras.map((t) => `<p style="text-indent:60px;margin:0 0 18px">${t}</p>`).join('')}
+      <div style="position:absolute;bottom:40px;left:0;right:0;text-align:center;font-size:21px">${num}</div></div></body></html>`;
+  await book.setContent(bookPage(12, 'การบันทึกบัญชี', [BOOK.p1, BOOK.p2]));
+  files.book12 = join(work, 'book12.png');
+  await book.screenshot({ path: files.book12 });
+  await book.setContent(bookPage(13, 'งบทดลอง', [BOOK.p3]));
+  files.book13 = join(work, 'book13.png');
+  await book.screenshot({ path: files.book13 });
+  await book.close();
+
   files.photoY4m = y4m(join(work, 'photo.y4m'), [[files.receipt, 2]]);
   files.videoY4m = y4m(join(work, 'video.y4m'), [
     [files.receipt, 6],
@@ -191,6 +213,52 @@ async function testPhoto(files) {
   return docxPath;
 }
 
+async function testBook(files) {
+  const { browser, page } = await openApp(files.photoY4m);
+  await page.click('.tabbar [data-tab="pages"]');
+  await page.check('.book-toggle input');
+  await page.click('.tabbar [data-tab="scan"]');
+  await page.setInputFiles('#file-input', [files.book12, files.book13]);
+  await waitForOcr(page);
+  const texts = [];
+  for (let i = 0; i < 2; i++) {
+    await page.click(`.page-item:nth-child(${i + 1}) [data-act="open"]`);
+    texts.push(await page.inputValue('#ed-text'));
+    await page.click('#ed-close');
+  }
+  await shot(page, '6-book-pages');
+  const [t12, t13] = texts;
+  assert.match(t12, /^#{1,2} การบันทึกบัญชี$/m, t12);
+  assert.ok(t12.includes(BOOK.p1), `ย่อหน้าแรกไม่ถูกรวมเป็นบรรทัดเดียว:\n${t12}`);
+  assert.ok(t12.includes(BOOK.p2), `ย่อหน้าที่สองไม่ถูกรวม:\n${t12}`);
+  assert.ok(!t12.includes('บทที่ 1') && !/^12$/m.test(t12), `ยังมีหัวกระดาษ/เลขหน้า:\n${t12}`);
+  assert.match(t13, /^#{1,2} งบทดลอง$/m, `หัวข้อ "งบทดลอง" หาย (ต้องอ่านซ้ำด้วย Tesseract):\n${t13}`);
+  assert.ok(t13.includes(BOOK.p3), t13);
+  console.log('✔ โหมดหนังสือ: รวมย่อหน้า แยกหัวข้อ ตัดหัวกระดาษ/เลขหน้า');
+
+  const [dw] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export-word')]);
+  const docx = join(work, 'book.docx');
+  await dw.saveAs(docx);
+  const xml = execFileSync('unzip', ['-p', docx, 'word/document.xml'], { encoding: 'utf8' });
+  assert.ok(/<w:pStyle w:val="Heading[12]"\/>.*?การบันทึกบัญชี/.test(xml), 'Word: หัวข้อไม่ได้เป็น Heading');
+  assert.ok(xml.includes(BOOK.p1), 'Word: ย่อหน้าไม่ครบ');
+  assert.ok(!xml.includes('<pic:pic'), 'Word โหมดหนังสือไม่ควรแนบภาพ');
+
+  const [dp] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export-pdf')]);
+  const pdf = join(work, 'book.pdf');
+  await dp.saveAs(pdf);
+  assert.match(dp.suggestedFilename(), /\.pdf$/);
+  const pdfText = execFileSync('pdftotext', [pdf, '-'], { encoding: 'utf8' }).replace(/\s+/g, '');
+  for (const expected of ['การบันทึกบัญชี', 'ซื้อวัสดุสำนักงานเป็นเงินสด1,500บาท', 'งบทดลอง', 'ถูกต้องของยอดคงเหลือ']) {
+    assert.ok(pdfText.includes(expected), `PDF ค้นหา "${expected}" ไม่เจอ`);
+  }
+  assert.ok(!pdfText.includes('ำา'), 'PDF: สระอำถูกแยกเป็น ำา');
+  const info = execFileSync('pdfinfo', [pdf], { encoding: 'utf8' });
+  assert.match(info, /Pages:\s+2/);
+  console.log('✔ ส่งออก Word (หัวข้อ/ย่อหน้า) และ PDF ที่ค้นหาข้อความภาษาไทยได้');
+  await browser.close();
+}
+
 async function testVideo(files) {
   const { browser, page } = await openApp(files.videoY4m);
   await page.click('.mode-switch [data-mode="video"]');
@@ -220,6 +288,7 @@ try {
   const files = await renderFixtures(b);
   await b.close();
   const docx = await testPhoto(files);
+  await testBook(files);
   await testVideo(files);
   writeFileSync(join(work, 'done'), docx);
   console.log(`\nผ่านทั้งหมด — ไฟล์ทดสอบอยู่ที่ ${work}`);

@@ -3,8 +3,9 @@
 
    ส่วน OT (detect → crop → recognize → จัดลำดับการอ่าน → ทำความสะอาดข้อความไทย) นำมาจาก
    openthai_worker.js ในไฟล์ invoice-to-journal.html ของผู้ใช้ ซึ่งแปลงมาจาก runtime/line_engine.py
-   และ thai_norm.py ของ OpenThai2.0-OCR-Text ทีละฟังก์ชัน — คงไว้ตามเดิม แก้เฉพาะส่วน init ให้โหลด
-   โมเดลจากไฟล์ของแอปนี้ (public/models/openthai2.0-ocr-text) แทนข้อมูลที่ฝังใน HTML
+   และ thai_norm.py ของ OpenThai2.0-OCR-Text ทีละฟังก์ชัน — คงไว้ตามเดิม ยกเว้น:
+   - ส่วน init: โหลดโมเดลจากไฟล์ของแอปนี้ (public/models/openthai2.0-ocr-text) แทนข้อมูลที่ฝังใน HTML
+   - read(): ส่งบรรทัดที่ถูกตัดทิ้ง (droppedLines) กลับไปด้วย ให้แอปลองอ่านซ้ำด้วย Tesseract
    ลิขสิทธิ์และ NOTICE ของโมเดล: public/models/openthai2.0-ocr-text/NOTICE */
 'use strict';
 var OT = (function () {
@@ -626,7 +627,7 @@ var OT = (function () {
         return detect(img).then(function (b) { return _page(img, b); });
       });
     }).then(function (page) {
-      var rc = CFG.rec, frag = _fragments(page.boxes, page.rec), rows = [], lines = [], dropped = 0;
+      var rc = CFG.rec, frag = _fragments(page.boxes, page.rec), rows = [], lines = [], dropped = 0, droppedLines = [];
       page.rows.forEach(function (r, ri) {
         var parts = [];
         r.forEach(function (i) {
@@ -636,7 +637,7 @@ var OT = (function () {
           else if (conf < rc.drop_below) bad = true;
           else if (text.replace(/ /g, '').length < rc.min_chars) bad = true;
           else if (conf < rc.junk_below && invalid_share(text) > rc.junk_invalid) bad = true;
-          if (bad) { dropped++; return; }
+          if (bad) { dropped++; droppedLines.push({ text: text, conf: conf, row: ri, box: page.boxes[i] }); return; }
           parts.push(text);
           var b = page.boxes[i];
           lines.push({ text: text, conf: conf, row: ri, box: b });
@@ -645,7 +646,7 @@ var OT = (function () {
       });
       var chars = 0, wsum = 0;
       lines.forEach(function (l) { chars += l.text.length; wsum += l.conf * l.text.length; });
-      return { rows: rows, lines: lines, rotation: rotation, skew: skew, angle: page.angle, dropped: dropped,
+      return { rows: rows, lines: lines, rotation: rotation, skew: skew, angle: page.angle, dropped: dropped, droppedLines: droppedLines,
         confidence: chars ? wsum / chars : 0, ms: Date.now() - t0 };
     });
   }
@@ -663,8 +664,9 @@ var OT = (function () {
       return asText ? r.text() : r.arrayBuffer();
     });
   }
-  /* a = { ort, ortDir, det, rec, dict } — URL แบบเต็มทั้งหมด */
+  /* a = { ort, ortDir, det, rec, dict } — URL แบบเต็มทั้งหมด; a.cfg = ปรับค่า CFG บางส่วน (ไม่บังคับ) */
   function init(a) {
+    if (a.cfg) Object.keys(a.cfg).forEach(function (k) { if (CFG[k]) Object.assign(CFG[k], a.cfg[k]); });
     if (typeof ort === 'undefined') importScripts(a.ort);
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.proxy = false;
