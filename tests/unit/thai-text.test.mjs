@@ -46,6 +46,7 @@ test('แปลงเลขไทยเป็นอารบิก', () => {
 test('จัดบรรทัด', () => {
   assert.equal(tidyLines('  ก  ข \n\n\n\nค  '), 'ก ข\n\nค');
   assert.equal(tidyLines('ก\n\nข', { removeBlankLines: true }), 'ก\nข');
+  assert.equal(tidyLines('ค่าบริการ \t\t 15,000.00 บาท '), 'ค่าบริการ\t15,000.00 บาท');
 });
 
 test('cleanOcrText กับผลจริงจาก Tesseract', () => {

@@ -19,6 +19,7 @@ const v = {
   tesseract: version('tesseract.js'),
   core: version('tesseract.js-core'),
   docx: version('docx'),
+  ort: version('onnxruntime-web'),
 };
 
 // โฟลเดอร์มีเลขเวอร์ชันกำกับ เพื่อให้ service worker แคชแบบ cache-first ได้อย่างปลอดภัย
@@ -27,6 +28,7 @@ const dirs = {
   core: `tesseract-core-${v.core}`,
   lang: 'lang-4.0.0_best_int',
   docx: `docx-${v.docx}`,
+  ort: `onnxruntime-web-${v.ort}`,
 };
 
 rmSync(out, { recursive: true, force: true });
@@ -52,6 +54,16 @@ for (const lang of ['tha', 'eng']) {
 copy('docx/dist/index.iife.js', `${dirs.docx}/docx.iife.js`);
 copy('docx/LICENSE', `${dirs.docx}/LICENSE`);
 
+// onnxruntime-web สำหรับรันโมเดล OpenThai2.0-OCR-Text (ใช้เฉพาะ WASM CPU)
+for (const f of ['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {
+  copy(`onnxruntime-web/dist/${f}`, `${dirs.ort}/${f}`);
+}
+// แพ็กเกจ npm ไม่มีไฟล์ LICENSE แยก (ประกาศ MIT อยู่ในหัวไฟล์ ort.wasm.min.js) จึงเขียนไว้ให้
+writeFileSync(
+  join(out, dirs.ort, 'LICENSE'),
+  'onnxruntime-web — Copyright (c) Microsoft Corporation.\nLicensed under the MIT License: https://github.com/microsoft/onnxruntime/blob/main/LICENSE\n',
+);
+
 writeFileSync(
   join(out, 'paths.js'),
   `// สร้างอัตโนมัติโดย scripts/vendor.mjs — ห้ามแก้ไขด้วยมือ
@@ -62,6 +74,8 @@ export const VENDOR = ${JSON.stringify(
       core: `vendor/${dirs.core}`,
       lang: `vendor/${dirs.lang}`,
       docx: `vendor/${dirs.docx}/docx.iife.js`,
+      ort: `vendor/${dirs.ort}/ort.wasm.min.js`,
+      ortDir: `vendor/${dirs.ort}/`,
       versions: v,
     },
     null,
@@ -70,4 +84,6 @@ export const VENDOR = ${JSON.stringify(
 `,
 );
 
-console.log(`✔ คัดลอกไลบรารีไปที่ public/vendor แล้ว (tesseract.js ${v.tesseract}, core ${v.core}, docx ${v.docx})`);
+console.log(
+  `✔ คัดลอกไลบรารีไปที่ public/vendor แล้ว (tesseract.js ${v.tesseract}, core ${v.core}, docx ${v.docx}, onnxruntime-web ${v.ort})`,
+);

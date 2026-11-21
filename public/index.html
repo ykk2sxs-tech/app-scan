@@ -151,7 +151,15 @@
         <fieldset class="card">
           <legend>การอ่านข้อความ (OCR)</legend>
           <label class="field">
-            <span>ภาษา</span>
+            <span>เครื่องมืออ่านข้อความ</span>
+            <select data-setting="ocrEngine">
+              <option value="openthai">OpenThai ของ iApp (แนะนำ)</option>
+              <option value="tesseract">Tesseract (เบราว์เซอร์รุ่นเก่า)</option>
+            </select>
+          </label>
+          <p class="muted small">ทั้งสองแบบทำงานในเครื่อง ไม่ต้องใช้อินเทอร์เน็ต — ถ้าเครื่องนี้ใช้ OpenThai ไม่ได้ จะสลับไปใช้ Tesseract ให้เอง ตัวเลือกด้านล่างใช้กับ Tesseract เท่านั้น</p>
+          <label class="field">
+            <span>ภาษา (Tesseract)</span>
             <select data-setting="ocrLang">
               <option value="tha+eng">ไทย + อังกฤษ (แนะนำ)</option>
               <option value="tha">ไทยอย่างเดียว</option>
@@ -159,7 +167,7 @@
             </select>
           </label>
           <label class="field">
-            <span>ลักษณะเอกสาร</span>
+            <span>ลักษณะเอกสาร (Tesseract)</span>
             <select data-setting="psm">
               <option value="3">อัตโนมัติ (แนะนำ)</option>
               <option value="6">ข้อความก้อนเดียว (ใบเสร็จ, ย่อหน้า)</option>
@@ -168,10 +176,10 @@
             </select>
           </label>
           <label class="field">
-            <span>ปรับภาพก่อนอ่าน</span>
+            <span>ปรับภาพก่อนอ่าน (Tesseract)</span>
             <select data-setting="enhance">
-              <option value="bw">ขาว-ดำอัตโนมัติ (แนะนำ — ทนเงาและแสงไม่เท่ากัน)</option>
-              <option value="gray">โทนเทา + ปรับคอนทราสต์ (ตัวอักษรบาง/สีอ่อน)</option>
+              <option value="auto">ปรับพื้นให้ขาวเท่ากัน (แนะนำ)</option>
+              <option value="bw">ขาว-ดำ (ตัวอักษรจางมาก)</option>
               <option value="none">ไม่ปรับ</option>
             </select>
           </label>
@@ -218,6 +226,7 @@
         <fieldset class="card">
           <legend>ข้อมูลและการใช้งานออฟไลน์</legend>
           <button id="btn-preload" class="btn"><svg><use href="#i-download"/></svg>เตรียม OCR สำหรับใช้งานออฟไลน์</button>
+          <p class="muted small">OpenThai2.0-OCR-Text © iApp Technology (Apache-2.0) พัฒนาต่อจาก PP-OCR ของ PaddlePaddle • Tesseract (Apache-2.0)</p>
           <p id="storage-info" class="muted small"></p>
           <p class="muted small">ภาพและข้อความทั้งหมดประมวลผลและเก็บอยู่ในเครื่องนี้เท่านั้น ไม่มีการส่งขึ้นอินเทอร์เน็ต</p>
           <p id="app-version" class="muted small"></p>

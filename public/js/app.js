@@ -3,6 +3,7 @@
 import { Camera } from './camera.js';
 import { VideoRecorder, extractFramesFromFile } from './video-scan.js';
 import { recognize, getWorker } from './ocr.js';
+import { recognizeOpenThai, getOpenThai } from './openthai.js';
 import { cleanOcrText, textSimilarity, ocrQuality } from './thai-text.js';
 import { normalizeImageBlob, rotateBlob, cropBlob, prepareForOcr, loadBitmap, toCanvas, canvasToBlob } from './image-tools.js';
 import { pageStore, loadSettings, saveSettings, DEFAULT_SETTINGS } from './store.js';
@@ -19,11 +20,12 @@ import {
 } from './util.js';
 import { VENDOR } from '../vendor/paths.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const MIN_VIDEO_TEXT = 3; // เฟรมวิดีโอที่มีตัวอักษรน้อยกว่านี้ถือว่าไม่มีข้อความ
 const MIN_RETRY_TEXT = 10; // อ่านได้น้อยกว่านี้ จะลองปรับภาพอีกแบบแล้วอ่านใหม่
 const countChars = (text) => String(text || '').replace(/\s+/g, '').length;
+const ENGINE_LABEL = { openthai: 'OpenThai', tesseract: 'Tesseract' };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -396,32 +398,25 @@ async function ocrPage(page) {
   const label = `หน้าที่ ${pageIndex(page)}${remaining ? ` (รออีก ${remaining})` : ''}`;
   setActivity('ocr', `กำลังเตรียมภาพ ${label}`, 0);
   try {
-    const run = async (mode) =>
-      recognize(await prepareForOcr(image, mode), {
-        langs: s.ocrLang,
-        psm: s.psm,
-        onProgress: ({ status, progress }) => {
-          setActivity('ocr', `${status} ${label}`, progress);
-          if (state.editingId === page.id) $('#ed-status').textContent = `${status} ${Math.round(progress * 100)}%`;
-        },
-      });
-    let { text, confidence } = await run(s.enhance);
-    // อ่านได้น้อยมาก → ลองปรับภาพอีกแบบ แล้วเลือกผลที่ได้ข้อความมากกว่า
-    if (s.enhance !== 'none' && countChars(text) < MIN_RETRY_TEXT && state.pages.includes(page)) {
-      const alt = await run(s.enhance === 'bw' ? 'gray' : 'bw');
-      if (countChars(alt.text) > countChars(text)) ({ text, confidence } = alt);
-    }
+    const result = await readPageText(page, image, label);
     if (!state.pages.includes(page)) return; // ถูกลบระหว่างอ่าน
     if (page.image !== image) {
       page.status = 'pending'; // ภาพถูกแก้ระหว่างอ่าน → อ่านใหม่
       return;
     }
-    page.rawText = text;
-    page.text = cleanOcrText(text, s);
-    page.confidence = confidence;
+    page.rawText = result.text;
+    page.text = cleanOcrText(result.text, s);
+    page.confidence = result.confidence;
+    page.engine = result.engine;
     page.status = 'done';
     page.edited = false;
     page.error = '';
+    // OpenThai พบว่าภาพตะแคง/กลับหัว → หมุนภาพที่เก็บไว้ให้ตั้งตรง (ข้อความอ่านจากภาพที่ตั้งตรงแล้ว)
+    if (result.rotation) {
+      if (!page.original) page.original = page.image;
+      page.image = await rotateBlob(image, result.rotation);
+      page.thumb = await makeThumb(page.image);
+    }
     await savePage(page);
     if (page.groupId && s.dedupe) await dedupeVideoFrame(page);
   } catch (err) {
@@ -434,6 +429,53 @@ async function ocrPage(page) {
   } finally {
     if (state.pages.includes(page)) refreshPage(page);
   }
+}
+
+/**
+ * อ่านข้อความหนึ่งหน้า: ใช้ OpenThai (iApp) เป็นหลัก ถ้าเครื่องนี้ใช้ไม่ได้หรืออ่านหน้านั้นพลาด
+ * จะใช้ Tesseract แทนให้อัตโนมัติ
+ */
+async function readPageText(page, image, label) {
+  const s = state.settings;
+  const report = (status, progress) => {
+    setActivity('ocr', `${status} ${label}`, progress);
+    if (state.editingId === page.id) $('#ed-status').textContent = `${status}…`;
+  };
+
+  if (s.ocrEngine === 'openthai' && !state.openThaiBroken) {
+    let ready = false;
+    try {
+      report('กำลังเตรียม OpenThai OCR', 0.15);
+      await getOpenThai();
+      ready = true;
+      report('กำลังอ่านข้อความ (OpenThai)', 0.5);
+      const bmp = await loadBitmap(image);
+      const canvas = toCanvas(bmp, 2400);
+      bmp.close?.();
+      const r = await recognizeOpenThai(canvas);
+      return { ...r, engine: 'openthai' };
+    } catch (err) {
+      console.warn('OpenThai:', err);
+      if (!ready) {
+        state.openThaiBroken = true; // เครื่อง/เบราว์เซอร์นี้รันไม่ได้ — ใช้ Tesseract ไปจนปิดแอป
+        toast(`ใช้ OpenThai OCR ในเครื่องนี้ไม่ได้ — เปลี่ยนไปใช้ Tesseract (${err.message})`, 'error');
+      }
+    }
+  }
+
+  const run = async (mode) =>
+    recognize(await prepareForOcr(image, mode), {
+      langs: s.ocrLang,
+      psm: s.psm,
+      onProgress: ({ status, progress }) => report(status, progress),
+    });
+  let r = await run(s.enhance);
+  // อ่านได้น้อยมาก → ลองปรับภาพอีกแบบ แล้วเลือกผลที่ได้ข้อความมากกว่า
+  if (s.enhance !== 'none' && countChars(r.text) < MIN_RETRY_TEXT && state.pages.includes(page)) {
+    const alt = await run(s.enhance === 'bw' ? 'auto' : 'bw');
+    if (countChars(alt.text) > countChars(r.text)) r = alt;
+  }
+  return { ...r, rotation: 0, engine: 'tesseract' };
 }
 
 /** ตัดเฟรมวิดีโอที่ไม่มีข้อความ หรือข้อความซ้ำกับเฟรมก่อนหน้า (เก็บเฟรมที่อ่านได้ดีกว่า) */
@@ -580,7 +622,9 @@ function fillEditor() {
     pending: 'รออ่านข้อความ…',
     processing: 'กำลังอ่านข้อความ…',
     error: `อ่านไม่สำเร็จ: ${page.error || ''}`,
-    done: page.edited ? 'แก้ไขข้อความแล้ว' : `ความมั่นใจ OCR ${page.confidence}%`,
+    done: page.edited
+      ? 'แก้ไขข้อความแล้ว'
+      : `${ENGINE_LABEL[page.engine] || 'OCR'} ความมั่นใจ ${page.confidence}%`,
   };
   $('#ed-status').textContent = `${SOURCE_LABEL[page.source] || ''} • ${thaiDateTime(page.createdAt)} • ${info[page.status]}`;
   updateCharCount();
@@ -837,6 +881,7 @@ function onSettingChanged(key) {
     startCamera();
   }
   if (key === 'videoInterval') setMode(state.mode);
+  if (key === 'ocrEngine') state.openThaiBroken = false;
 }
 
 async function renderStorageInfo() {
@@ -855,6 +900,10 @@ async function preloadOffline() {
   btn.classList.add('busy');
   setActivity('import', 'กำลังเตรียม OCR…', 0.1);
   try {
+    if (state.settings.ocrEngine === 'openthai') {
+      await getOpenThai();
+      setActivity('import', 'กำลังเตรียม Tesseract (ตัวสำรอง)…', 0.5);
+    }
     await getWorker(state.settings.ocrLang);
     setActivity('import', 'กำลังเตรียมตัวสร้างไฟล์ Word…', 0.8);
     await loadDocx();
@@ -984,7 +1033,8 @@ async function init() {
   setMode('photo');
   document.body.classList.add('scan-mode');
   $('#app-version').textContent =
-    `เวอร์ชัน ${APP_VERSION} • Tesseract.js ${VENDOR.versions.tesseract} • docx ${VENDOR.versions.docx}`;
+    `เวอร์ชัน ${APP_VERSION} • OpenThai2.0-OCR-Text (iApp) • onnxruntime-web ${VENDOR.versions.ort} • ` +
+    `Tesseract.js ${VENDOR.versions.tesseract} • docx ${VENDOR.versions.docx}`;
 
   try {
     state.pages = await pageStore.all();

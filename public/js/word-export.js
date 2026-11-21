@@ -28,7 +28,7 @@ export async function loadDocx() {
  */
 export async function buildWordDocument(pages, opts = {}) {
   const docx = await loadDocx();
-  const { Document, Packer, Paragraph, TextRun, ImageRun, AlignmentType, HeadingLevel, Footer, PageNumber, LineRuleType } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, AlignmentType, HeadingLevel, Footer, PageNumber, LineRuleType, Tab } = docx;
 
   const fontName = opts.font || 'TH Sarabun New';
   const size = (opts.fontSize || 16) * 2; // หน่วย half-point
@@ -113,7 +113,11 @@ export async function buildWordDocument(pages, opts = {}) {
     const text = (page.text || '').trim();
     const lines = text ? text.split('\n') : ['(ไม่พบข้อความ)'];
     for (const line of lines) {
-      children.push(new Paragraph({ children: line ? [run(line)] : [] }));
+      // tab = ข้อความคนละคอลัมน์ในแถวเดียวกัน → ใส่เป็น tab ของ Word
+      const runs = line
+        .split('\t')
+        .flatMap((part, k) => (k ? [new TextRun({ children: [new Tab()] }), run(part)] : part ? [run(part)] : []));
+      children.push(new Paragraph({ children: runs }));
     }
     if (!opts.pageBreak && i < pages.length - 1) {
       children.push(new Paragraph({ spacing: { after: 240 }, children: [] }));

@@ -50,9 +50,15 @@ export function thaiDigitsToArabic(text) {
   return text.replace(/[๐-๙]/g, (d) => String(d.charCodeAt(0) - 0x0e50));
 }
 
-/** ตัดช่องว่างท้ายบรรทัด และยุบบรรทัดว่างที่ติดกันให้เหลือบรรทัดเดียว */
+/**
+ * ตัดช่องว่างหัว/ท้ายบรรทัด ยุบช่องว่างซ้ำ และยุบบรรทัดว่างที่ติดกันให้เหลือบรรทัดเดียว
+ * (คง tab ไว้ — ใช้คั่นข้อความคนละคอลัมน์ในแถวเดียวกัน เช่น รายการ ⇥ จำนวนเงิน)
+ */
 export function tidyLines(text, { removeBlankLines = false } = {}) {
-  let lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim());
+  let lines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((l) => l.replace(/ +/g, ' ').replace(/ *\t[\t ]*/g, '\t').trim());
   if (removeBlankLines) lines = lines.filter(Boolean);
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }

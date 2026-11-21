@@ -1,8 +1,8 @@
 // Service worker: ทำให้แอปเปิดได้แม้ไม่มีอินเทอร์เน็ต
 // - ไฟล์แอป: network-first (ได้เวอร์ชันใหม่เสมอเมื่อออนไลน์ ใช้แคชเมื่อออฟไลน์)
-// - ไฟล์ไลบรารีใน vendor/ (มีเลขเวอร์ชันในชื่อโฟลเดอร์): cache-first
+// - ไฟล์ไลบรารีใน vendor/ และโมเดลใน models/ (มีเลขเวอร์ชันในชื่อโฟลเดอร์): cache-first
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const SHELL_CACHE = `shell-${VERSION}`;
 const VENDOR_CACHE = 'vendor';
 const SHELL = [
@@ -18,6 +18,8 @@ const SHELL = [
   'js/util.js',
   'js/video-scan.js',
   'js/word-export.js',
+  'js/openthai.js',
+  'js/openthai-worker.js',
   'vendor/paths.js',
   'manifest.webmanifest',
   'icons/icon.svg',
@@ -42,6 +44,7 @@ async function pruneVendorCache() {
     const cache = await caches.open(VENDOR_CACHE);
     for (const req of await cache.keys()) {
       const path = new URL(req.url).pathname;
+      if (path.includes('/models/')) continue; // โมเดล OCR ไม่ได้อยู่ใน paths.js
       if (!dirs.some((d) => path.includes(`/vendor/${d}/`))) await cache.delete(req);
     }
   } catch {
@@ -89,6 +92,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
-  const isVendorFile = url.pathname.includes('/vendor/') && !url.pathname.endsWith('/paths.js');
+  const isVendorFile =
+    (url.pathname.includes('/vendor/') && !url.pathname.endsWith('/paths.js')) || url.pathname.includes('/models/');
   event.respondWith(isVendorFile ? cacheFirst(request) : networkFirst(request));
 });

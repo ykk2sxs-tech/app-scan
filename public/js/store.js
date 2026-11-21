@@ -40,9 +40,10 @@ export const pageStore = {
 
 export const DEFAULT_SETTINGS = {
   docTitle: 'เอกสารสแกน',
+  ocrEngine: 'openthai',
   ocrLang: 'tha+eng',
   psm: '3',
-  enhance: 'bw',
+  enhance: 'auto',
   fixThai: true,
   removeThaiSpaces: false,
   fixNumbers: true,

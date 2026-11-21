@@ -111,6 +111,78 @@ function autoLevels(gray) {
 }
 
 /**
+ * ปรับพื้นกระดาษให้ขาวเท่ากันทั้งภาพ (แก้เงาและแสงไม่สม่ำเสมอจากกล้องมือถือ)
+ * ประมาณสีพื้นจากส่วนที่สว่างของแต่ละบล็อก แล้วหารออก — ตัวอักษรยังเป็นโทนเทา ไม่แตกเหมือนการทำขาว-ดำ
+ */
+function flattenBackground(gray, w, h) {
+  const s = Math.max(16, Math.round(Math.max(w, h) / 48));
+  const bw = Math.ceil(w / s);
+  const bh = Math.ceil(h / s);
+  if (bw < 2 || bh < 2) return gray;
+  const bg = new Float32Array(bw * bh);
+  const hist = new Uint32Array(256);
+  for (let by = 0; by < bh; by++) {
+    for (let bx = 0; bx < bw; bx++) {
+      hist.fill(0);
+      let n = 0;
+      for (let y = by * s; y < Math.min(h, (by + 1) * s); y += 2) {
+        for (let x = bx * s; x < Math.min(w, (bx + 1) * s); x += 2) {
+          hist[gray[y * w + x]]++;
+          n++;
+        }
+      }
+      // เปอร์เซ็นไทล์ที่ 90 = สีกระดาษ (ตัวอักษรเป็นส่วนมืดส่วนน้อย)
+      let v = 255;
+      for (let acc = 0; v > 0 && (acc += hist[v]) < n * 0.1; v--);
+      bg[by * bw + bx] = v;
+    }
+  }
+  // ขยายค่าสว่าง (max 3x3) กันบล็อกที่ตัวอักษรหนาแน่น แล้วเกลี่ยให้เรียบ (เฉลี่ย 3x3)
+  const pass = (src, fn) => {
+    const out = new Float32Array(src.length);
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const vals = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const yy = y + dy;
+            const xx = x + dx;
+            if (yy >= 0 && yy < bh && xx >= 0 && xx < bw) vals.push(src[yy * bw + xx]);
+          }
+        }
+        out[y * bw + x] = fn(vals);
+      }
+    }
+    return out;
+  };
+  const smooth = pass(
+    pass(bg, (v) => Math.max(...v)),
+    (v) => v.reduce((a, b) => a + b, 0) / v.length,
+  );
+  let darkest = 255;
+  for (const v of smooth) darkest = Math.min(darkest, v);
+  if (darkest > 235) return gray; // พื้นขาวเท่ากันอยู่แล้ว (ภาพสแกน) ไม่ต้องแก้
+
+  const out = new Uint8ClampedArray(gray.length);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(bh - 1.001, Math.max(0, y / s - 0.5));
+    const y0 = Math.floor(fy);
+    const ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(bw - 1.001, Math.max(0, x / s - 0.5));
+      const x0 = Math.floor(fx);
+      const tx = fx - x0;
+      const i = y0 * bw + x0;
+      const b =
+        (smooth[i] * (1 - tx) + smooth[i + 1 < smooth.length ? i + 1 : i] * tx) * (1 - ty) +
+        (smooth[Math.min(i + bw, smooth.length - 1)] * (1 - tx) + smooth[Math.min(i + bw + 1, smooth.length - 1)] * tx) * ty;
+      out[y * w + x] = (gray[y * w + x] * 250) / Math.max(40, b);
+    }
+  }
+  return out;
+}
+
+/**
  * Adaptive threshold (Bradley–Roth) ทำภาพขาว-ดำ ทนต่อเงาและแสงไม่สม่ำเสมอ
  * ซึ่งพบบ่อยเวลาถ่ายเอกสารด้วยมือถือ
  */
@@ -141,12 +213,12 @@ function adaptiveThreshold(gray, w, h, t = 0.15) {
 }
 
 /**
- * เตรียมภาพสำหรับ OCR
- * mode: 'bw'   = ขาว-ดำแบบ adaptive (ค่าเริ่มต้น — ทนเงาและแสงไม่สม่ำเสมอจากกล้องมือถือ)
- *       'gray' = โทนเทา + ปรับคอนทราสต์ (ให้ Tesseract ตัดขาว-ดำเอง)
+ * เตรียมภาพสำหรับ Tesseract
+ * mode: 'auto' = ปรับพื้นให้ขาวเท่ากัน + ปรับคอนทราสต์ เก็บโทนเทาไว้ (ค่าเริ่มต้น)
+ *       'bw'   = ปรับพื้นแล้วทำขาว-ดำแบบ adaptive (ตัวอักษรจาง/ซีดมาก)
  *       'none' = ใช้ภาพตามเดิม
  */
-export async function prepareForOcr(blob, mode = 'bw') {
+export async function prepareForOcr(blob, mode = 'auto') {
   const bmp = await loadBitmap(blob);
   const { w, h } = sizeOf(bmp);
   // ขนาดที่เหมาะกับ Tesseract: ไม่ใหญ่เกิน (ช้า) และไม่เล็กเกิน (ตัวอักษรเล็กอ่านไม่ออก)
@@ -161,7 +233,7 @@ export async function prepareForOcr(blob, mode = 'bw') {
   if (mode === 'none') return c;
 
   const img = ctx.getImageData(0, 0, c.width, c.height);
-  let gray = autoLevels(toGray(img.data));
+  let gray = autoLevels(flattenBackground(toGray(img.data), c.width, c.height));
   if (mode === 'bw') gray = adaptiveThreshold(gray, c.width, c.height);
   const d = img.data;
   for (let i = 0, j = 0; j < gray.length; i += 4, j++) {

@@ -15,6 +15,7 @@
     "@tesseract.js-data/eng": "1.0.0",
     "@tesseract.js-data/tha": "1.0.0",
     "docx": "9.5.1",
+    "onnxruntime-web": "1.20.1",
     "tesseract.js": "7.0.0",
     "tesseract.js-core": "7.0.0"
   },

@@ -141,6 +141,7 @@ async function testPhoto(files) {
   // เปิดหน้าแก้ไข แก้ข้อความ แล้วส่งออก Word
   await page.click('.page-item [data-act="open"]');
   await page.waitForSelector('#editor[open]');
+  assert.match(await page.textContent('#ed-status'), /OpenThai/, 'ค่าเริ่มต้นควรอ่านด้วย OpenThai');
   await shot(page, '3-editor');
   await page.fill('#ed-text', `${await page.inputValue('#ed-text')}\nหมายเหตุ: ตรวจสอบแล้ว`);
   await page.click('#ed-close');
@@ -173,7 +174,19 @@ async function testPhoto(files) {
   assert.equal(after.length, 2);
   assert.ok(after[1].text.includes('สัญญาเช่าอาคารพาณิชย์'), after[1].text);
   assert.ok(after[1].text.includes('25,000.00'), after[1].text);
-  console.log('✔ นำเข้าไฟล์ภาพ');
+  console.log('✔ นำเข้าไฟล์ภาพ (OpenThai)');
+
+  // เปลี่ยนเป็น Tesseract แล้วสั่งอ่านหน้าที่ 2 ใหม่
+  await page.click('.tabbar [data-tab="settings"]');
+  await page.selectOption('[data-setting="ocrEngine"]', 'tesseract');
+  await page.click('.tabbar [data-tab="pages"]');
+  await page.click('.page-item:nth-child(2) [data-act="open"]');
+  await page.click('#ed-tools [data-act="ocr"]');
+  await page.waitForFunction(() => /Tesseract/.test(document.querySelector('#ed-status').textContent), null, { timeout: 120000 });
+  const tessText = await page.inputValue('#ed-text');
+  assert.ok(tessText.includes('สัญญาเช่าอาคารพาณิชย์') && tessText.includes('25,000.00'), tessText);
+  await page.click('#ed-close');
+  console.log('✔ อ่านด้วย Tesseract (ตัวสำรอง)');
   await browser.close();
   return docxPath;
 }
