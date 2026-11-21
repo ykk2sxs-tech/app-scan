@@ -1,0 +1,24 @@
+{
+  "name": "thai-ocr-scanner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "สแกนเอกสารด้วยกล้องมือถือ (ภาพถ่าย/วิดีโอ) อ่านข้อความภาษาไทยด้วย OCR แล้วบันทึกเป็นไฟล์ Word",
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/vendor.mjs",
+    "build": "node scripts/vendor.mjs",
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "node tests/e2e/scan.e2e.mjs"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/tha": "1.0.0",
+    "docx": "9.5.1",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "สแกนเอกสาร OCR ภาษาไทย",
+  "short_name": "สแกน OCR",
+  "description": "สแกนเอกสารด้วยกล้องมือถือ ทั้งภาพถ่ายและวิดีโอ อ่านข้อความภาษาไทยแล้วบันทึกเป็นไฟล์ Word",
+  "lang": "th",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#05090f",
+  "theme_color": "#0b2a4a",
+  "categories": ["productivity", "business", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
