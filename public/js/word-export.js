@@ -3,6 +3,7 @@
 import { VENDOR } from '../vendor/paths.js';
 import { loadScript, thaiDateLong, thaiDateTime } from './util.js';
 import { imageSize } from './image-tools.js';
+import { parseBookText, joinLines } from './book.js';
 
 // A4 ขอบ 2 ซม. → พื้นที่กว้าง 17 ซม. ≈ 640px ที่ 96dpi
 const PAGE = { width: 11906, height: 16838, margin: 1134 };
@@ -63,6 +64,20 @@ export async function buildWordDocument(pages, opts = {}) {
     );
   }
 
+  // ย่อหน้าโหมดหนังสือที่ยังรอว่าจะต่อกับหน้าถัดไปหรือไม่
+  let pendingPara = null;
+  const flushPara = () => {
+    if (!pendingPara) return;
+    children.push(
+      new Paragraph({
+        spacing: { after: 160 },
+        indent: { firstLine: 567 }, // ย่อหน้าเข้า 1 ซม. แบบหนังสือ
+        children: [run(pendingPara.text)],
+      }),
+    );
+    pendingPara = null;
+  };
+
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
     const first = i === 0;
@@ -110,6 +125,28 @@ export async function buildWordDocument(pages, opts = {}) {
       );
     }
 
+    if (opts.bookMode) {
+      // โหมดหนังสือ: "# หัวข้อ" → Heading, 1 บรรทัด = 1 ย่อหน้า
+      // ถ้าพิมพ์ต่อเนื่อง (ไม่ขึ้นหน้าใหม่/ไม่มีหัวข้อหน้า) และย่อหน้าสุดท้ายของหน้าก่อนยังไม่จบ → ต่อเป็นย่อหน้าเดียวกัน
+      const blocks = parseBookText(page.text);
+      const continuous = !opts.pageBreak && opts.headings === false && !opts.includeImages;
+      if (continuous && pendingPara && page.flow && !page.flow.startsNew && blocks[0]?.type === 'para') {
+        pendingPara.text = joinLines(pendingPara.text, blocks.shift().text);
+      }
+      for (const b of blocks) {
+        flushPara();
+        if (b.type === 'heading') {
+          const level = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3][b.level - 1];
+          children.push(new Paragraph({ heading: level, children: [run(b.text)] }));
+        } else {
+          pendingPara = { text: b.text };
+        }
+      }
+      // ย่อหน้าสุดท้ายรอไว้ก่อน เผื่อหน้าถัดไปต่อจากย่อหน้านี้
+      if (!(continuous && page.flow?.endsOpen)) flushPara();
+      continue;
+    }
+
     const text = (page.text || '').trim();
     const lines = text ? text.split('\n') : ['(ไม่พบข้อความ)'];
     for (const line of lines) {
@@ -123,6 +160,8 @@ export async function buildWordDocument(pages, opts = {}) {
       children.push(new Paragraph({ spacing: { after: 240 }, children: [] }));
     }
   }
+
+  flushPara();
 
   const headingStyle = (pt, extra = {}) => ({
     run: { font, size: pt * 2, sizeComplexScript: pt * 2, bold: true, boldComplexScript: true, color: '1F3864' },
@@ -143,6 +182,8 @@ export async function buildWordDocument(pages, opts = {}) {
         },
         title: headingStyle(Math.round(basePt * 1.5), { alignment: AlignmentType.CENTER }),
         heading1: headingStyle(Math.round(basePt * 1.15)),
+        heading2: headingStyle(Math.round(basePt * 1.05)),
+        heading3: headingStyle(basePt),
       },
     },
     sections: [

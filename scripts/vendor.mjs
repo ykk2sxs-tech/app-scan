@@ -20,6 +20,9 @@ const v = {
   core: version('tesseract.js-core'),
   docx: version('docx'),
   ort: version('onnxruntime-web'),
+  pdflib: version('pdf-lib'),
+  fontkit: version('@pdf-lib/fontkit'),
+  sarabun: version('@expo-google-fonts/sarabun'),
 };
 
 // โฟลเดอร์มีเลขเวอร์ชันกำกับ เพื่อให้ service worker แคชแบบ cache-first ได้อย่างปลอดภัย
@@ -29,6 +32,8 @@ const dirs = {
   lang: 'lang-4.0.0_best_int',
   docx: `docx-${v.docx}`,
   ort: `onnxruntime-web-${v.ort}`,
+  pdflib: `pdf-lib-${v.pdflib}`,
+  font: `sarabun-${v.sarabun}`,
 };
 
 rmSync(out, { recursive: true, force: true });
@@ -58,6 +63,18 @@ copy('docx/LICENSE', `${dirs.docx}/LICENSE`);
 for (const f of ['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {
   copy(`onnxruntime-web/dist/${f}`, `${dirs.ort}/${f}`);
 }
+// pdf-lib + fontkit สำหรับสร้าง PDF ที่ค้นหาข้อความได้ และฟอนต์ Sarabun (OFL) สำหรับชั้นข้อความภาษาไทย
+copy('pdf-lib/dist/pdf-lib.min.js', `${dirs.pdflib}/pdf-lib.min.js`);
+copy('pdf-lib/LICENSE.md', `${dirs.pdflib}/LICENSE-pdf-lib.md`);
+copy('@pdf-lib/fontkit/dist/fontkit.umd.min.js', `${dirs.pdflib}/fontkit.umd.min.js`);
+// แพ็กเกจ @pdf-lib/fontkit ไม่มีไฟล์ LICENSE แยก — เขียนประกาศไว้ให้
+writeFileSync(
+  join(out, dirs.pdflib, 'LICENSE-fontkit'),
+  '@pdf-lib/fontkit (fork of fontkit by Devon Govett) — Licensed under the MIT License: https://github.com/Hopding/fontkit\n',
+);
+copy('@expo-google-fonts/sarabun/400Regular/Sarabun_400Regular.ttf', `${dirs.font}/Sarabun-Regular.ttf`);
+copy('@expo-google-fonts/sarabun/LICENSE_FONT', `${dirs.font}/OFL.txt`);
+
 // แพ็กเกจ npm ไม่มีไฟล์ LICENSE แยก (ประกาศ MIT อยู่ในหัวไฟล์ ort.wasm.min.js) จึงเขียนไว้ให้
 writeFileSync(
   join(out, dirs.ort, 'LICENSE'),
@@ -76,6 +93,9 @@ export const VENDOR = ${JSON.stringify(
       docx: `vendor/${dirs.docx}/docx.iife.js`,
       ort: `vendor/${dirs.ort}/ort.wasm.min.js`,
       ortDir: `vendor/${dirs.ort}/`,
+      pdflib: `vendor/${dirs.pdflib}/pdf-lib.min.js`,
+      fontkit: `vendor/${dirs.pdflib}/fontkit.umd.min.js`,
+      thaiFont: `vendor/${dirs.font}/Sarabun-Regular.ttf`,
       versions: v,
     },
     null,

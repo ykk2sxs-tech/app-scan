@@ -59,8 +59,9 @@ export async function getWorker(langs) {
 
 /**
  * อ่านข้อความจากภาพ
- * @param image canvas / Blob / ImageBitmap
- * @returns {Promise<{text: string, confidence: number}>}
+ * @param image canvas ที่เตรียมแล้ว
+ * @returns {Promise<{text: string, confidence: number, layout: {aspect: number, rows: object[], lines: object[]}}>}
+ *   layout = ตำแหน่งบรรทัด (พิกัด 0..1 ของภาพ) ใช้จัดย่อหน้าโหมดหนังสือ และวางชั้นข้อความใน PDF
  */
 export async function recognize(image, { langs = 'tha+eng', psm = '3', onProgress } = {}) {
   progressListener = onProgress;
@@ -70,8 +71,25 @@ export async function recognize(image, { langs = 'tha+eng', psm = '3', onProgres
       tessedit_pageseg_mode: String(psm),
       user_defined_dpi: '300',
     });
-    const { data } = await worker.recognize(image);
-    return { text: data.text || '', confidence: Math.round(data.confidence || 0) };
+    const { data } = await worker.recognize(image, {}, { text: true, blocks: true });
+    const W = image.width || 1;
+    const H = image.height || 1;
+    const lines = [];
+    for (const block of data.blocks || []) {
+      for (const para of block.paragraphs || []) {
+        for (const line of para.lines || []) {
+          const text = String(line.text || '').trim();
+          if (!text || !line.bbox) continue;
+          const { x0, y0, x1, y1 } = line.bbox;
+          lines.push({ text, x0: x0 / W, y0: y0 / H, x1: x1 / W, y1: y1 / H });
+        }
+      }
+    }
+    return {
+      text: data.text || '',
+      confidence: Math.round(data.confidence || 0),
+      layout: { aspect: W / H, rows: lines, lines },
+    };
   } finally {
     progressListener = null;
   }

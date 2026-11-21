@@ -37,6 +37,8 @@
       <symbol viewBox="0 0 24 24" id="i-copy" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
       <symbol viewBox="0 0 24 24" id="i-share" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14"/></symbol>
       <symbol viewBox="0 0 24 24" id="i-download" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+      <symbol viewBox="0 0 24 24" id="i-book" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></symbol>
+      <symbol viewBox="0 0 24 24" id="i-pdf" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><circle cx="11" cy="14" r="2.5"/><path d="m13 16 2.5 2.5"/></symbol>
       <symbol viewBox="0 0 24 24" id="i-word" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8 12 1.3 5L11 13l1.7 4L14 12"/></symbol>
     </defs>
   </svg>
@@ -96,9 +98,13 @@
           <input id="doc-title" type="text" data-setting="docTitle" autocomplete="off" maxlength="80">
         </label>
 
+        <label class="check book-toggle"><input type="checkbox" data-setting="bookMode"> <span><b>โหมดหนังสือ</b> — รวมบรรทัดเป็นย่อหน้า แยกหัวข้อ ตัดเลขหน้าและหัวกระดาษ</span></label>
+
         <button id="btn-export-word" class="btn primary big"><svg><use href="#i-word"/></svg>บันทึกเป็นไฟล์ Word (.docx)</button>
+        <button id="btn-export-pdf" class="btn big"><svg><use href="#i-pdf"/></svg>PDF เหมือนต้นฉบับ (ค้นหาข้อความได้)</button>
         <div class="btn-grid">
           <button id="btn-share-word" class="btn" hidden><svg><use href="#i-share"/></svg>แชร์ไฟล์ Word</button>
+          <button id="btn-share-pdf" class="btn" hidden><svg><use href="#i-share"/></svg>แชร์ PDF</button>
           <button id="btn-copy-all" class="btn"><svg><use href="#i-copy"/></svg>คัดลอกข้อความ</button>
           <button id="btn-export-txt" class="btn"><svg><use href="#i-download"/></svg>ไฟล์ .txt</button>
           <button id="btn-clear-all" class="btn danger"><svg><use href="#i-trash"/></svg>ลบทั้งหมด</button>
@@ -192,7 +198,14 @@
           <label class="check"><input type="checkbox" data-setting="thaiDigits"> แปลงเลขไทยเป็นเลขอารบิก (๒๕๖๙ → 2569)</label>
           <label class="check"><input type="checkbox" data-setting="removeThaiSpaces"> ลบช่องว่างระหว่างคำภาษาไทยทั้งหมด</label>
           <label class="check"><input type="checkbox" data-setting="removeBlankLines"> ลบบรรทัดว่าง</label>
-          <p class="muted small">มีผลกับหน้าที่สแกนใหม่ หรือเมื่อกด “อ่านใหม่” ในหน้านั้น</p>
+          <p class="muted small">มีผลทันทีกับทุกหน้าที่ยังไม่ได้แก้ไขข้อความเอง</p>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend>หนังสือ</legend>
+          <label class="check"><input type="checkbox" data-setting="bookMode"> โหมดหนังสือ — รวมบรรทัดเป็นย่อหน้า แยกหัวข้อจากตัวอักษรที่ใหญ่กว่า ตัดเลขหน้าและหัวกระดาษที่ซ้ำทุกหน้า</label>
+          <label class="check"><input type="checkbox" data-setting="splitSpreads"> แบ่งภาพหนังสือกาง 2 หน้า (ภาพแนวนอน) เป็นหน้าซ้าย/ขวาอัตโนมัติ (เฉพาะโหมดหนังสือ)</label>
+          <p class="muted small">ในหน้าแก้ไข บรรทัดที่ขึ้นต้นด้วย # คือหัวข้อ, ## คือหัวข้อย่อย และ 1 บรรทัดคือ 1 ย่อหน้า</p>
         </fieldset>
 
         <fieldset class="card">
@@ -264,6 +277,7 @@
         <button data-act="rotl"><svg><use href="#i-rotl"/></svg>หมุนซ้าย</button>
         <button data-act="rotr"><svg><use href="#i-rotr"/></svg>หมุนขวา</button>
         <button data-act="crop"><svg><use href="#i-crop"/></svg>ครอป</button>
+        <button data-act="split"><svg><use href="#i-book"/></svg>แบ่งหน้า</button>
         <button data-act="reset"><svg><use href="#i-undo"/></svg>ภาพเดิม</button>
         <button data-act="ocr"><svg><use href="#i-text"/></svg>อ่านใหม่</button>
       </div>
@@ -272,6 +286,7 @@
         <button class="btn primary" data-act="crop-apply">ครอปและอ่านใหม่</button>
       </div>
       <div class="ed-meta"><span id="ed-status"></span><span id="ed-count"></span></div>
+      <p id="ed-book-hint" class="muted small" hidden>โหมดหนังสือ: บรรทัดที่ขึ้นต้นด้วย # คือหัวข้อ, ## คือหัวข้อย่อย — 1 บรรทัด = 1 ย่อหน้า</p>
       <textarea id="ed-text" lang="th" spellcheck="false" placeholder="ข้อความที่อ่านได้จะแสดงที่นี่ — แก้ไขได้"></textarea>
       <div class="ed-bottom">
         <button id="ed-copy" class="btn"><svg><use href="#i-copy"/></svg>คัดลอกข้อความหน้านี้</button>

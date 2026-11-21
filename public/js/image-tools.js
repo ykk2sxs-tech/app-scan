@@ -302,3 +302,37 @@ export async function imageSize(blob) {
   bmp.close?.();
   return { width: s.w, height: s.h };
 }
+
+/**
+ * หาแนวสันหนังสือของภาพหนังสือกาง 2 หน้า: คอลัมน์ที่มีขอบตัวอักษรน้อยที่สุดช่วงกลางภาพ (35–65%)
+ * @returns ตำแหน่ง 0..1 ตามความกว้างภาพ
+ */
+export async function findGutter(blob) {
+  const bmp = await loadBitmap(blob);
+  const c = toCanvas(bmp, 480);
+  bmp.close?.();
+  const { width: w, height: h } = c;
+  const gray = toGray(c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data);
+  const energy = new Float32Array(w);
+  for (let y = Math.floor(h * 0.1); y < h * 0.9; y++) {
+    for (let x = 0; x < w - 1; x++) energy[x] += Math.abs(gray[y * w + x + 1] - gray[y * w + x]);
+  }
+  const win = Math.max(3, Math.round(w / 60));
+  let best = 0.5;
+  let bestScore = Infinity;
+  for (let x = Math.floor(w * 0.35); x <= Math.ceil(w * 0.65); x++) {
+    let s = 0;
+    for (let k = -win; k <= win; k++) s += energy[Math.min(w - 1, Math.max(0, x + k))];
+    if (s < bestScore) {
+      bestScore = s;
+      best = x / w;
+    }
+  }
+  return best;
+}
+
+/** แบ่งภาพหนังสือกาง 2 หน้า → [หน้าซ้าย, หน้าขวา] */
+export async function splitSpread(blob, at) {
+  const cut = at ?? (await findGutter(blob));
+  return Promise.all([cropBlob(blob, { x: 0, y: 0, w: cut, h: 1 }), cropBlob(blob, { x: cut, y: 0, w: 1 - cut, h: 1 })]);
+}
