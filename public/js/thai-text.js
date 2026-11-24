@@ -103,6 +103,32 @@ export function textSimilarity(a, b) {
   return (2 * overlap) / (A.size + B.size);
 }
 
+/**
+ * ข้อความดูเป็นภาษาจริงหรือเป็นขยะจาก OCR — ใช้ตัดสินว่าจะเก็บผลที่ไม่มั่นใจไว้ให้ตรวจหรือไม่
+ * ขยะที่พบบ่อย: อักษรไทยปนอังกฤษในคำเดียว ("งUM6"), สระบน/ล่าง/วรรณยุกต์ไม่มีพยัญชนะนำ, สระหน้าไม่มีพยัญชนะตาม
+ */
+export function looksLikeText(text) {
+  const t = String(text || '').trim();
+  if (t.replace(/\s+/g, '').length < 2) return false;
+  if (t.split(/\s+/).some((w) => /[ก-๎]/.test(w) && /[A-Za-z]/.test(w))) return false;
+  let thai = 0;
+  let bad = 0;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (!/[฀-๿]/.test(ch)) continue;
+    thai++;
+    const prev = t[i - 1] || '';
+    const prev2 = t[i - 2] || '';
+    if (/[ัิ-ฺ็-๎]/.test(ch)) {
+      const ok = /[ก-ฮ]/.test(prev) || (/[ัิ-ฺ็-๎]/.test(prev) && /[ก-ฮ]/.test(prev2));
+      if (!ok) bad++;
+    } else if (/[เ-ไ]/.test(ch) && !/[ก-ฮ]/.test(t[i + 1] || '')) {
+      bad++;
+    }
+  }
+  return !thai || bad / thai <= 0.05;
+}
+
 /** คะแนนคุณภาพผล OCR ใช้เลือกเฟรมที่ดีกว่าเมื่อเฟรมซ้ำกัน */
 export function ocrQuality(text, confidence) {
   const len = String(text || '').replace(/\s+/g, '').length;

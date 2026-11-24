@@ -4,7 +4,7 @@ import { Camera } from './camera.js';
 import { VideoRecorder, extractFramesFromFile } from './video-scan.js';
 import { recognize, getWorker } from './ocr.js';
 import { recognizeOpenThai, getOpenThai, rowsFromLines, rowsToText } from './openthai.js';
-import { cleanOcrText, textSimilarity, ocrQuality } from './thai-text.js';
+import { cleanOcrText, textSimilarity, ocrQuality, looksLikeText } from './thai-text.js';
 import {
   normalizeImageBlob,
   rotateBlob,
@@ -16,6 +16,7 @@ import {
   imageSize,
   findGutter,
   splitSpread,
+  findUnreadRegions,
 } from './image-tools.js';
 import { reflowRows, blocksToText, edgeKeys } from './book.js';
 import { buildSearchablePdf } from './pdf-export.js';
@@ -33,7 +34,7 @@ import {
 } from './util.js';
 import { VENDOR } from '../vendor/paths.js';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
 const SPREAD_ASPECT = 1.2; // ภาพกว้าง/สูง ตั้งแต่นี้ขึ้นไปถือว่าเป็นหนังสือกาง 2 หน้า
@@ -446,6 +447,7 @@ async function ocrPage(page) {
     page.status = 'done';
     page.edited = false;
     page.error = '';
+    page.flags = []; // บรรทัดที่อ่านไม่ชัด/อ่านไม่ได้ (ตีกรอบให้ตรวจในหน้าแก้ไข)
     // OpenThai พบว่าภาพตะแคง/กลับหัว → หมุนภาพที่เก็บไว้ให้ตั้งตรง (ข้อความอ่านจากภาพที่ตั้งตรงแล้ว)
     if (result.rotation) {
       if (!page.original) page.original = page.image;
@@ -455,8 +457,19 @@ async function ocrPage(page) {
     if (result.engine === 'openthai' && result.layout?.dropped?.length) {
       await rescueDroppedLines(page, result.layout);
     }
+    // บริเวณที่มีตัวอักษรแต่ OCR ไม่เห็นเป็นบรรทัดเลย (มักเป็นท้ายหน้าที่เบลอ/มืด) → ตีกรอบเตือน
+    if (page.layout?.lines?.length) {
+      try {
+        for (const r of await findUnreadRegions(page.image, page.layout.lines)) page.flags.push({ kind: 'missing', ...r });
+      } catch (err) {
+        console.warn('findUnreadRegions:', err);
+      }
+    }
     page.text = composeText(page);
     await savePage(page);
+    if (page.flags.some((f) => f.kind !== 'uncertain')) {
+      toast(`หน้าที่ ${pageIndex(page)}: ข้อความอาจไม่ครบ (บางส่วนของภาพไม่ชัด) — เปิดดูกรอบที่ต้องตรวจในแท็บเอกสาร`, 'error');
+    }
     // โหมดหนังสือ: หัวกระดาษที่ซ้ำกันจะรู้ได้เมื่อมีหลายหน้า → จัดข้อความหน้าอื่นใหม่ด้วย
     if (s.bookMode) await recomposeAll(page);
     if (page.groupId && s.dedupe) await dedupeVideoFrame(page);
@@ -481,12 +494,13 @@ async function rescueDroppedLines(page, layout) {
   const H = median(layout.lines.map((l) => l.y1 - l.y0)) || 0.02;
   const candidates = layout.dropped
     .filter((d) => d.y1 - d.y0 >= 0.7 * H && (d.x1 - d.x0) * layout.aspect >= 1.5 * (d.y1 - d.y0))
-    .slice(0, 8);
+    .slice(0, 30);
   if (!candidates.length) return;
   const bmp = await loadBitmap(page.image);
   const W = bmp.width;
   const Hh = bmp.height;
   let added = 0;
+  const flag = (d, kind) => page.flags.push({ kind, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 });
   try {
     for (const d of candidates) {
       const pad = (d.y1 - d.y0) * 0.2;
@@ -501,8 +515,23 @@ async function rescueDroppedLines(page, layout) {
       c.height = Math.round(sh * k);
       c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
       const r = await recognize(c, { langs: state.settings.ocrLang, psm: '7' });
-      const text = r.text.replace(/\s+/g, ' ').trim();
-      if (r.confidence < 70 || countChars(text) < 2) continue;
+      let text = r.text.replace(/\s+/g, ' ').trim();
+      if (r.confidence < 70 || countChars(text) < 2) {
+        // ไม่มั่นใจทั้งสองตัว (มักเป็นบรรทัดท้ายหน้าที่เบลอ/โค้ง/มีเงา) — ไม่ทิ้งเงียบ ๆ:
+        // เก็บผลที่ดูเป็นข้อความจริงและมั่นใจกว่าไว้ แล้วตีกรอบให้ผู้ใช้ตรวจในหน้าแก้ไข
+        const best = [
+          [text, r.confidence],
+          [String(d.text || '').trim(), Math.round((d.conf || 0) * 100)],
+        ]
+          .filter(([t, c]) => c >= 40 && looksLikeText(t))
+          .sort((a, b) => b[1] - a[1])[0];
+        if (!best) {
+          flag(d, 'unreadable');
+          continue;
+        }
+        text = best[0];
+        flag(d, 'uncertain');
+      }
       layout.lines.push({ text, ri: d.ri, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, quad: d.quad });
       added++;
     }
@@ -651,8 +680,49 @@ function statusChip(page) {
       return '<span class="st st-error">อ่านไม่สำเร็จ</span>';
     default:
       if (page.edited) return '<span class="st st-done">แก้ไขแล้ว</span>';
-      return `<span class="st ${page.confidence >= 70 ? 'st-done' : 'st-low'}">ความมั่นใจ ${page.confidence}%</span>`;
+      return (
+        `<span class="st ${page.confidence >= 70 ? 'st-done' : 'st-low'}">ความมั่นใจ ${page.confidence}%</span>` +
+        (page.flags?.length ? ` <span class="st st-low">⚠ ตรวจ ${page.flags.length} จุด</span>` : '')
+      );
   }
+}
+
+/** ตีกรอบบนภาพในหน้าแก้ไข: บรรทัดที่อ่านไม่ชัด (ส้ม) / อ่านไม่ได้ (แดง) */
+function drawFlags() {
+  const layer = $('#ed-flags');
+  const page = currentPage();
+  const flags = (!crop.active && page?.status === 'done' && page.flags) || [];
+  layer.replaceChildren();
+  $('#ed-flag-note').hidden = !flags.length;
+  if (!flags.length) return;
+  const n = (k) => flags.filter((f) => f.kind === k).length;
+  const parts = [
+    n('uncertain') && `กรอบส้ม = อ่านไม่ชัด ${n('uncertain')} บรรทัด`,
+    n('unreadable') && `กรอบแดง = อ่านไม่ได้ ${n('unreadable')} บรรทัด`,
+    n('missing') && `กรอบแดงประ = มีข้อความแต่ OCR อ่านไม่เห็น ${n('missing')} จุด`,
+  ].filter(Boolean);
+  $('#ed-flag-note').textContent =
+    `⚠ ข้อความอาจไม่ครบ ควรตรวจกับภาพ (${parts.join(', ')}) — ` +
+    'ถ่ายใหม่ให้ชัดทั้งหน้า (แสงพอ ถือกล้องขนานกับหน้า) หรือครอปเฉพาะส่วนนั้นแล้วกด "อ่านใหม่" แล้วรวมข้อความเอง';
+  const r = imageRectInWrap();
+  for (const f of flags) {
+    const box = document.createElement('i');
+    box.className = `flag ${f.kind}`;
+    Object.assign(box.style, {
+      left: `${r.x + f.x0 * r.w}px`,
+      top: `${r.y + f.y0 * r.h}px`,
+      width: `${(f.x1 - f.x0) * r.w}px`,
+      height: `${(f.y1 - f.y0) * r.h}px`,
+    });
+    layer.appendChild(box);
+  }
+}
+
+/** ช่องข้อความยืดตามความยาว — เห็นข้อความทั้งหน้าโดยเลื่อนหน้าจอปกติ ไม่ต้องเลื่อนภายในช่อง */
+function autoGrowText() {
+  const t = $('#ed-text');
+  t.style.height = 'auto';
+  t.style.height = `${t.scrollHeight + 2}px`;
 }
 
 function pageSnippet(page) {
@@ -727,6 +797,9 @@ function openEditor(id) {
   fillEditor();
   if (!editor.open) editor.showModal();
   $('#editor .editor-body').scrollTop = 0;
+  // ขนาดภาพ/ช่องข้อความรู้ได้หลังเปิดหน้าต่างแล้ว
+  autoGrowText();
+  drawFlags();
 }
 
 function fillEditor() {
@@ -752,6 +825,8 @@ function fillEditor() {
   };
   $('#ed-status').textContent = `${SOURCE_LABEL[page.source] || ''} • ${thaiDateTime(page.createdAt)} • ${info[page.status]}`;
   updateCharCount();
+  autoGrowText();
+  if (img.complete) drawFlags();
 }
 
 function updateCharCount() {
@@ -897,6 +972,7 @@ function enterCropMode() {
   const r = imageRectInWrap();
   if (!r.w || !r.h) return;
   crop.active = true;
+  drawFlags();
   crop.box = { x: r.x + r.w * 0.05, y: r.y + r.h * 0.05, w: r.w * 0.9, h: r.h * 0.9 };
   drawCropBox();
   $('#crop-box').hidden = false;
@@ -910,6 +986,7 @@ function exitCropMode() {
   $('#crop-box').hidden = true;
   $('#ed-tools').hidden = false;
   $('#ed-crop-actions').hidden = true;
+  if (editor.open) drawFlags();
 }
 
 function drawCropBox() {
@@ -1233,6 +1310,7 @@ function bindEvents() {
   });
   $('#ed-text').addEventListener('input', () => {
     updateCharCount();
+    autoGrowText();
     clearTimeout(textSaveTimer);
     textSaveTimer = setTimeout(flushTextSave, 500);
   });
@@ -1242,7 +1320,14 @@ function bindEvents() {
   cropBox.addEventListener('pointermove', onCropPointerMove);
   cropBox.addEventListener('pointerup', () => (crop.drag = null));
   cropBox.addEventListener('pointercancel', () => (crop.drag = null));
-  window.addEventListener('resize', () => crop.active && exitCropMode());
+  window.addEventListener('resize', () => {
+    if (crop.active) exitCropMode();
+    if (editor.open) {
+      drawFlags();
+      autoGrowText();
+    }
+  });
+  $('#ed-image').addEventListener('load', drawFlags);
 
   $('#btn-preload').addEventListener('click', preloadOffline);
 

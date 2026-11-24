@@ -336,3 +336,76 @@ export async function splitSpread(blob, at) {
   const cut = at ?? (await findGutter(blob));
   return Promise.all([cropBlob(blob, { x: 0, y: 0, w: cut, h: 1 }), cropBlob(blob, { x: cut, y: 0, w: 1 - cut, h: 1 })]);
 }
+
+/**
+ * หาบริเวณที่ "มีลายตัวอักษร แต่ OCR ไม่ได้อ่าน" ภายในคอลัมน์ข้อความ — มักเป็นบรรทัดท้ายหน้า
+ * ที่เบลอ/มืด/โค้งจน OCR ไม่เห็นว่าเป็นบรรทัด (ถ้าไม่ตรวจ ข้อความส่วนนั้นจะหายไปเงียบ ๆ)
+ * ลายตัวอักษร = บล็อกที่มีความต่างของสี และมีเส้นทั้งแนวตั้งและแนวนอน (ขอบกระดาษ/เงามีแนวเดียว)
+ * @param lines บรรทัดที่อ่านได้ [{x0,y0,x1,y1}] พิกัด 0..1
+ * @returns [{x0,y0,x1,y1}] บริเวณที่ควรตรวจ
+ */
+export async function findUnreadRegions(blob, lines) {
+  if (!lines?.length) return [];
+  const bmp = await loadBitmap(blob);
+  const c = toCanvas(bmp, 800);
+  bmp.close?.();
+  const W = c.width;
+  const Hh = c.height;
+  const g = toGray(c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, Hh).data);
+  const hs = lines.map((l) => l.y1 - l.y0).sort((a, b) => a - b);
+  const H = hs[hs.length >> 1] || 0.02;
+  const left = Math.min(...lines.map((l) => l.x0));
+  const right = Math.max(...lines.map((l) => l.x1));
+  const top = Math.min(...lines.map((l) => l.y0));
+  const bottom = Math.max(...lines.map((l) => l.y1));
+  const B = 12;
+  const covered = (bx, by) => {
+    const x = ((bx + 0.5) * B) / W;
+    const y = ((by + 0.5) * B) / Hh;
+    return lines.some((l) => x >= l.x0 - 0.01 && x <= l.x1 + 0.01 && y >= l.y0 - 0.3 * H && y <= l.y1 + 0.3 * H);
+  };
+  const textLike = (bx, by) => {
+    let s = 0;
+    let s2 = 0;
+    let gx = 0;
+    let gy = 0;
+    let n = 0;
+    for (let y = by * B + 1; y < (by + 1) * B - 1; y++) {
+      for (let x = bx * B + 1; x < (bx + 1) * B - 1; x++) {
+        const i = y * W + x;
+        const v = g[i];
+        s += v;
+        s2 += v * v;
+        n++;
+        gx += Math.abs(g[i + 1] - g[i - 1]);
+        gy += Math.abs(g[i + W] - g[i - W]);
+      }
+    }
+    const std = Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2));
+    return std >= 7 && Math.min(gx, gy) / Math.max(gx, gy, 1) >= 0.2;
+  };
+  const x0b = Math.floor((left * W) / B);
+  const x1b = Math.min(Math.ceil((right * W) / B), Math.floor(W / B) - 1);
+  const span = Math.max(1, x1b - x0b);
+  const rows = Math.floor(Hh / B) - 1;
+  const regions = [];
+  let start = -1;
+  for (let by = 1; by <= rows; by++) {
+    const y = (by * B) / Hh;
+    let on = false;
+    // เฉพาะช่วงตั้งแต่เหนือบรรทัดแรกเล็กน้อย ถึงใต้บรรทัดสุดท้ายไม่เกิน 25% ของภาพ
+    if (by < rows && y >= top - 3 * H && y <= bottom + 0.25) {
+      let hit = 0;
+      for (let bx = Math.max(1, x0b); bx < x1b; bx++) if (!covered(bx, by) && textLike(bx, by)) hit++;
+      on = hit / span >= 0.25;
+    }
+    if (on && start < 0) start = by;
+    if (!on && start >= 0) {
+      const y0 = (start * B) / Hh;
+      const y1 = (by * B) / Hh;
+      if (y1 - y0 >= 1.2 * H) regions.push({ x0: left, x1: right, y0, y1 });
+      start = -1;
+    }
+  }
+  return regions;
+}

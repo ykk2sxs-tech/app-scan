@@ -426,6 +426,8 @@ details.card summary { font-weight: 600; cursor: pointer; padding: 2px 0; }
   width: 100%;
   margin: 0 auto;
 }
+/* ห้ามย่อส่วนประกอบในหน้าแก้ไข — ไม่อย่างนั้นช่องข้อความถูกบีบเหลือ 40vh และข้อความท้ายหน้าซ่อนอยู่ในช่อง */
+.editor-body > * { flex-shrink: 0; }
 .ed-image-wrap {
   position: relative;
   display: flex;
@@ -473,8 +475,22 @@ details.card summary { font-weight: 600; cursor: pointer; padding: 2px 0; }
 .ed-crop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ed-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
 #ed-count { white-space: nowrap; }
+.ed-flags { position: absolute; inset: 0; pointer-events: none; }
+.flag { position: absolute; border: 2px solid; border-radius: 3px; }
+.flag.uncertain { border-color: #f59e0b; background: rgba(245, 158, 11, 0.18); }
+.flag.unreadable { border-color: #dc2626; background: rgba(220, 38, 38, 0.18); }
+.flag.missing { border: 2px dashed #dc2626; background: rgba(220, 38, 38, 0.12); }
+.flag-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 14px;
+}
 #ed-text {
   min-height: 40vh;
+  overflow: hidden;
   width: 100%;
   padding: 12px;
   border: 1px solid var(--border);
@@ -482,7 +498,7 @@ details.card summary { font-weight: 600; cursor: pointer; padding: 2px 0; }
   background: var(--surface);
   font-size: 17px;
   line-height: 1.7;
-  resize: vertical;
+  resize: none;
 }
 #ed-text:disabled { opacity: 0.6; }
 .ed-bottom { display: flex; justify-content: flex-end; }
