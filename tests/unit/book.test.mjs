@@ -107,3 +107,18 @@ test('reflowRows: ตัดเศษสระที่ OCR แยกเป็น
   );
   assert.deepEqual(r.blocks, [{ type: 'para', text: 'การบันทึกบัญชีเป็นขั้นตอนแรกของวงจรวันที่ที่เกิดรายการ' }]);
 });
+
+test('reflowRows: ภาพเอียงแบบเปอร์สเปกทีฟ (บรรทัดล่างแคบลง) ไม่ตัดย่อหน้าผิด', () => {
+  // ย่อหน้าเดียว 12 บรรทัด ขอบซ้าย/ขวาค่อย ๆ หดเข้าจากบนลงล่าง บรรทัดสุดท้ายสั้น
+  const rows = [];
+  for (let i = 0; i < 12; i++) {
+    const shrink = i * 0.008;
+    const x0 = 0.05 + shrink + (i === 0 ? 0.05 : 0);
+    const x1 = i === 11 ? 0.5 : 0.95 - shrink;
+    rows.push(row(`บรรทัดที่${i + 1}ของย่อหน้า`, x0, 0.1 + i * 0.035, x1));
+  }
+  const r = reflowRows(rows, { aspect: 0.7 });
+  assert.equal(r.blocks.length, 1, JSON.stringify(r.blocks.map((b) => b.text.slice(0, 20))));
+  assert.ok(r.blocks[0].text.endsWith('บรรทัดที่12ของย่อหน้า'));
+  assert.equal(r.endsOpen, false);
+});

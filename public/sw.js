@@ -2,7 +2,7 @@
 // - ไฟล์แอป: network-first (ได้เวอร์ชันใหม่เสมอเมื่อออนไลน์ ใช้แคชเมื่อออฟไลน์)
 // - ไฟล์ไลบรารีใน vendor/ และโมเดลใน models/ (มีเลขเวอร์ชันในชื่อโฟลเดอร์): cache-first
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const SHELL_CACHE = `shell-${VERSION}`;
 const VENDOR_CACHE = 'vendor';
 const SHELL = [

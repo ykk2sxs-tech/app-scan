@@ -109,6 +109,7 @@ export function layoutFromOpenThai(r, Wc, Hc) {
     const [tr] = px.slice(2).sort((a, b) => a[1] - b[1]);
     return {
       text: l.text,
+      conf: l.conf,
       ri: l.row,
       x0: clamp(Math.min(...xs)),
       y0: clamp(Math.min(...ys)),

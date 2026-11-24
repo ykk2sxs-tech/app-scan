@@ -88,8 +88,18 @@ export function reflowRows(rows, { aspect = 0.75, otherEdges = [] } = {}) {
   if (!list.length) return { blocks: [], startsNew: true, endsOpen: false };
 
   // ขอบซ้าย/ขวาของคอลัมน์ = แถวอื่นที่ซ้อนทับในแนวนอน
+  // ขอบคอลัมน์ของแถว = จากแถวที่อยู่ติดกัน (บน 2 ล่าง 2 ในคอลัมน์เดียวกัน) เท่านั้น
+  // ภาพถ่ายเอียงแบบเปอร์สเปกทีฟ ขอบซ้าย/ขวาของบรรทัดล่างจะแคบกว่าบรรทัดบน ถ้าเทียบทั้งหน้า
+  // จะเข้าใจผิดว่าบรรทัดล่างย่อหน้าเข้า/จบสั้น แล้วตัดย่อหน้าผิด
   const colOf = (r) => {
-    const peers = list.filter((o) => Math.min(o.x1, r.x1) - Math.max(o.x0, r.x0) > 0.3 * (r.x1 - r.x0));
+    const i = list.indexOf(r);
+    const peers = list
+      .slice(Math.max(0, i - 2), i + 3)
+      .filter(
+        (o) =>
+          Math.abs((o.y0 + o.y1) / 2 - (r.y0 + r.y1) / 2) <= 3.5 * H &&
+          Math.min(o.x1, r.x1) - Math.max(o.x0, r.x0) > 0.3 * (r.x1 - r.x0),
+      );
     return { left: Math.min(...peers.map((o) => o.x0)), right: Math.max(...peers.map((o) => o.x1)) };
   };
   // หัวข้อ = ตัวอักษรใหญ่กว่าเนื้อหา และไม่ยาวเต็มคอลัมน์ (บรรทัดเนื้อหาบางบรรทัดมีกรอบสูงกว่าปกติจากสระบน/ล่าง)

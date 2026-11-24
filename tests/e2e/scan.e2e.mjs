@@ -83,6 +83,15 @@ async function renderFixtures(browser) {
   await book.setContent(bookPage(13, 'งบทดลอง', [BOOK.p3]));
   files.book13 = join(work, 'book13.png');
   await book.screenshot({ path: files.book13 });
+  // หน้าเต็มที่ย่อหน้าท้ายเบลอ (เหมือนภาพถ่ายที่ส่วนล่างหลุดโฟกัส)
+  await book.setContent(
+    bookPage(14, 'การปิดบัญชี', [BOOK.p1, BOOK.p2, BOOK.p3, BOOK.p1]).replace(
+      /<p style="text-indent:60px;margin:0 0 18px">([^<]*)<\/p>(?![\s\S]*<p )/,
+      '<p style="text-indent:60px;margin:0 0 18px;filter:blur(4px);opacity:.75">$1</p>',
+    ),
+  );
+  files.blurBottom = join(work, 'blur-bottom.png');
+  await book.screenshot({ path: files.blurBottom });
   await book.close();
 
   files.photoY4m = y4m(join(work, 'photo.y4m'), [[files.receipt, 2]]);
@@ -159,6 +168,7 @@ async function testPhoto(files) {
     assert.ok(pages[0].text.includes(expected), `ไม่พบ "${expected}" ใน: ${pages[0].text}`);
   }
   assert.ok(!pages[0].text.includes('ํา'), 'ยังมี "ํา" ที่ไม่ได้แก้เป็น "ำ"');
+  assert.ok(!/ตรวจ \d+ จุด/.test(pages[0].head), `ภาพชัดไม่ควรถูกเตือนว่าข้อความไม่ครบ: ${pages[0].head}`);
 
   // เปิดหน้าแก้ไข แก้ข้อความ แล้วส่งออก Word
   await page.click('.page-item [data-act="open"]');
@@ -227,6 +237,7 @@ async function testBook(files) {
     await page.click('#ed-close');
   }
   await shot(page, '6-book-pages');
+  assert.ok(!/ตรวจ \d+ จุด/.test(await page.textContent('#page-list')), 'หน้าหนังสือที่ชัดไม่ควรถูกเตือน');
   const [t12, t13] = texts;
   assert.match(t12, /^#{1,2} การบันทึกบัญชี$/m, t12);
   assert.ok(t12.includes(BOOK.p1), `ย่อหน้าแรกไม่ถูกรวมเป็นบรรทัดเดียว:\n${t12}`);
@@ -256,6 +267,22 @@ async function testBook(files) {
   const info = execFileSync('pdfinfo', [pdf], { encoding: 'utf8' });
   assert.match(info, /Pages:\s+2/);
   console.log('✔ ส่งออก Word (หัวข้อ/ย่อหน้า) และ PDF ที่ค้นหาข้อความภาษาไทยได้');
+  await browser.close();
+}
+
+async function testUnreadBottom(files) {
+  const { browser, page } = await openApp(files.photoY4m);
+  await page.setInputFiles('#file-input', [files.blurBottom]);
+  await waitForOcr(page);
+  const chip = await page.textContent('.page-item .pi-head');
+  assert.match(chip, /ตรวจ \d+ จุด/, `ไม่เตือนว่าข้อความท้ายหน้าอาจไม่ครบ: ${chip}`);
+  await page.click('.page-item [data-act="open"]');
+  await page.waitForSelector('#ed-flag-note:not([hidden])');
+  assert.ok((await page.$$('#ed-flags .flag')).length > 0, 'ไม่มีกรอบบอกตำแหน่งบนภาพ');
+  const [sh, ch] = await page.$eval('#ed-text', (t) => [t.scrollHeight, t.clientHeight]);
+  assert.ok(ch >= sh - 4, `ช่องข้อความไม่ยืดตามความยาว (${ch} < ${sh}) ข้อความท้ายหน้าจะซ่อนอยู่`);
+  await shot(page, '7-unread-bottom');
+  console.log('✔ ภาพท้ายหน้าเบลอ: เตือนและตีกรอบตำแหน่งที่อ่านไม่ได้, ช่องข้อความแสดงครบทั้งหน้า');
   await browser.close();
 }
 
@@ -289,6 +316,7 @@ try {
   await b.close();
   const docx = await testPhoto(files);
   await testBook(files);
+  await testUnreadBottom(files);
   await testVideo(files);
   writeFileSync(join(work, 'done'), docx);
   console.log(`\nผ่านทั้งหมด — ไฟล์ทดสอบอยู่ที่ ${work}`);

@@ -74,3 +74,9 @@ test('ocrQuality', () => {
   assert.ok(ocrQuality('ข้อความยาวกว่า', 90) > ocrQuality('สั้น', 90));
   assert.equal(ocrQuality('', 90), 0);
 });
+
+test('looksLikeText: แยกข้อความจริงกับขยะจาก OCR', async () => {
+  const { looksLikeText } = await import('../../public/js/thai-text.js');
+  for (const t of ['งบทดลอง', 'หนี้สงสัยจะสูญ การบันทึกบัญชี', 'Total 1,050.00 บาท', 'น้ำ ที่ กี่']) assert.ok(looksLikeText(t), t);
+  for (const t of ['งUM6 ล อ ป', 'ี', '่ ้ ั', 'เ']) assert.ok(!looksLikeText(t), t);
+});

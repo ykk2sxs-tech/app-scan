@@ -269,6 +269,7 @@
     <div class="editor-body">
       <div id="ed-image-wrap" class="ed-image-wrap">
         <img id="ed-image" alt="ภาพที่สแกน">
+        <div id="ed-flags" class="ed-flags" aria-hidden="true"></div>
         <div id="crop-box" class="crop-box" hidden>
           <i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i>
         </div>
@@ -285,6 +286,7 @@
         <button class="btn" data-act="crop-cancel">ยกเลิก</button>
         <button class="btn primary" data-act="crop-apply">ครอปและอ่านใหม่</button>
       </div>
+      <p id="ed-flag-note" class="flag-note" hidden></p>
       <div class="ed-meta"><span id="ed-status"></span><span id="ed-count"></span></div>
       <p id="ed-book-hint" class="muted small" hidden>โหมดหนังสือ: บรรทัดที่ขึ้นต้นด้วย # คือหัวข้อ, ## คือหัวข้อย่อย — 1 บรรทัด = 1 ย่อหน้า</p>
       <textarea id="ed-text" lang="th" spellcheck="false" placeholder="ข้อความที่อ่านได้จะแสดงที่นี่ — แก้ไขได้"></textarea>
